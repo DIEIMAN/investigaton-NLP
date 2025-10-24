@@ -11,7 +11,7 @@ class TransformersModel:
     ) -> None:
         self.name = name
         self.quantized = quantized
-        self.tokenizer, self.local_model = self.load_base_model(quantized=quantized)
+        self.tokenizer, self.model = self.load_base_model(quantized=quantized)
 
     def load_base_model(self, quantized: bool = False):
         if quantized:
@@ -38,7 +38,7 @@ class TransformersModel:
     def parse_thinking(self, content: str) -> tuple[Optional[str], str]:
         raise NotImplementedError("Not implemented")
 
-    def reply(self, messages, tools):
+    def reply(self, messages, tools=[]):
         formatted_input = self.tokenizer.apply_chat_template(
             messages,
             tools=tools,
@@ -46,8 +46,8 @@ class TransformersModel:
             tokenize=False,
         )
 
-        inputs = self.tokenizer(formatted_input, return_tensors="pt").to("cuda")
-        outputs = self.local_model.generate(
+        inputs = self.tokenizer(formatted_input, return_tensors="pt").to(self.model.device)
+        outputs = self.model.generate(
             **inputs,
             max_new_tokens=1024,
             temperature=0.7,
