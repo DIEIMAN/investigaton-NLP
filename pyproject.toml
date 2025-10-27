@@ -21,4 +21,5 @@ torch = [
     "torchaudio",
     "transformers",
     "accelerate",
+    "bitsandbytes
 ]
