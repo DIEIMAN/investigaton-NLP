@@ -3,7 +3,7 @@ import pickle
 import numpy as np
 from tqdm import tqdm
 from src.agents.MemoryAgent import MemoryAgent
-from src.core.LongMemEvalDataset import LongMemEvalInstance
+from src.datasets.LongMemEvalDataset import LongMemEvalInstance
 from litellm import embedding
 
 

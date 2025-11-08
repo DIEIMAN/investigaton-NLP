@@ -1,100 +1,104 @@
-uv venv .venv --python=python3.13
+# Memoria para asistentes conversacionales
 
-# LongMemEval - Resumen del Paper
+## Introducción
 
-# Preguntas que tengo del paper
+Para el track de NLP proponemos el siguiente problema: Necesitamos crear un sistema para aumentar un asistente conversacional tipo chatbot con un modulo de memoria.
 
-- Cual es la diferencia entre LongMemEval_S y LongMemEval_M
-- Cual es la diferencia entre los tres datasets [acá](https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/tree/main)
+Para ayudarlxs a encarar el problema, preparamos este repo con un sistema de memoria basico basado en un retriever semantico. Recordemos que un retriever semantico puede pensarse como una funcion que, para una query Q y documentos D, devuelve la relevancia de cada documento condicionada a la query.
 
-# Resumen
+NO es necesario que basen su solucion en este repo, ni que sigan la estructura del mismo. Esto es solo para ayudarles a arrancar y si no les sirve ni lo miren.
 
-While the length of the history is freely extensible, we provide two standard settings
-for consistent comparison: 
+## Estructura del proyecto
 
-- LONGMEMEVALS with approximately 115k tokens per problem
-- LONGMEMEVALM with 500 sessions (around 1.5 million tokens).
+Si no te interesa, podes saltear directo a setup.
 
-## 3. LongMemEval
+La carpeta principal del proyecto es `src`. Dentro de ella tienen `models`, `agents`, `datasets`, `experiments`.
 
-### 3.1 Formulation
+- `models` tiene distintas implementaciones que les pueden servir de inspiracion. LiteLLM puede estar bueno si piensan probar modelos de distintas apis, ya que unifica su interfaz. A su vez, en caso de usar un modelo de huggingface, recomendamos el uso de Qwen3, ya que soporta reasoning y tiene muy buenas capacidades de uso de tools. Es por eso que incluimos una implementacion de QwenModel. Depende del hardware que esten usando y de su experiencia, pueden tambien implementarlo usando Ollama o VLLM.
+- `agents` tiene distintas implementaciones de agentes. JudgeAgent es el que usamos para evaluar si la respuesta a una pregunta es correcta. FullContext es un agente que, dada una instancia de LongMemEval, le pasa todas las conversaciones a un modelo para que este intente responder. Si tienen acceso a un modelo con ventana de contexto muy grande, como gpt-5 o gemini, pueden intentar usarlo, aunque no lo recomendamos por no ser una solucion muy creativa y ser sumamente cara :). Finalmente RagAgente es el que implementa el modulo de rag que benchmarkeamos.
+- En `datasets` tenemos una implementacion comoda que puede servirles para entender como leer el benchmark. Como veran, definimos la clase
 
-Una instancia de su benchmark es una 
+```python
+def instance_from_row(self, row):
+    return LongMemEvalInstance(
+        question_id=row["question_id"],
+        question=row["question"],
+        sessions=[
+            Session(session_id=session_id, date=date, messages=messages)
+            for session_id, date, messages in zip(
+                row["haystack_session_ids"], row["haystack_dates"], row["haystack_sessions"]
+            )
+        ],
+        t_question=row["question_date"],
+        answer=row["answer"],
+    )
+```
 
-Una 4-upla $(S, q, t_q, a)$
+siguiendo la definicion del paper.
 
-Una secuencia de sesiones $S ≡
-[(t_1, S_1),(t_2, S_2), ...,(t_N , S_N )]$ ordenada cronologicamente
+Finalmente en `experiments` esta la implementacion del experimento, junto con algunas utils que permiten cargar los modelos y modulos de memoria. En la carpeta `config` esta la configuracion que se usa para correr el expeirmento. La configuracion permite elegir que implementacion usar (fullcontext, rag, ... pueden agregar mas), que modelo usar para responder, que modelo usar como juez, etc...
 
-- Acá, $S_i$ es una interaccion multi-turno entre un usuario y un asistente
-- $t_i$ es el timestamp de la sesion
+## Setup
 
-Ademas, plantean que cada sesion puede descomponerse en *rounds*, donde un *round* es un mensaje de usuario seguido por uno de asistente.
+Si no usas `uv`, es muy recomendable. Podes descargarlo e instalarlo aca: https://docs.astral.sh/uv/getting-started/installation/
 
-En la evaluación:
+### Instalacion de uv y requierements
 
-- Se provee $S$ al sistema, sesion por sesion
-- Se provee $q$ y $t_q > t_N$, que representan la pregunta y su respectiva fecha.
-- $a$ es una frase corta que indica la respuesta, pues en algunos casos la pregunta es *open-ended*
+Una vez instalado, instala las dependencias usando
 
-### 3.2 Benchmark Curation
+```sh
+uv sync
+```
 
-El benchmark apunta a evaluar cinco cuestiones:
+### Descarga de datasets
 
-- **Information Extraction (IE):** Ability to recall specific information from extensive
-interactive histories, including the details mentioned by either the user or the assistant.
-- **Multi-Session Reasoning (MR):** Ability to synthesize the information across multiple
-history sessions to answer complex questions that involve aggregation and comparison
-- **Knowledge Updates (KU)**: Ability to recognize the changes in the user’s personal
-information and update the knowledge of the user dynamically over time.
-- **Temporal Reasoning (TR):** Awareness of the temporal aspects of user information,
-including both explicit time mentions and timestamp metadata in the interactions.
-- **Abstention (ABS):** Ability to identify questions seeking unknown information, i.e.,
-information not mentioned by the user in the interaction history, and answer “I don’t know”.
+Con las dependencias ya instaladas, descarga los datasets del benchmark usando
 
-Para hacer esto, el benchmark propone siete tipos de preguntas:
+```sh
+uv run scripts/download_dataset.py # Para descargar los datasets
+```
 
-- **Single-session-user**
-- **single-session-assistant**
-- **Single-session-preference**
-- **multi-session (MR)**
-- **knowledge-update (KU)**
-- **Temporal-reasoning (TR)**
-- **Abstention:** No aparece como un tipo de pregunta en el dataset, pero son 30 preguntas modificadas para evaluar si el modelo puede detectar que no tiene información suficiente y abstenerse.
+o
 
-![image.png](attachment:5e9522dd-8ce0-44df-8331-6e069c41d39b:image.png)
+```sh
+source .venv/ibin/activate # Para activar el virtual environment
+python scripts/download_dataset.py
+```
 
-Definen una ontologia con 164 atributos en cinco categorias:
+### Descarga de embeddings
 
-- lifestyle
-- belongings
-- life events
-- situations context
-- demographic information
+Como vas a ver mas adelante en este ejemplo, uno de los modulos de memoria desarrollados usa embeddings. Es decir, para cada round conversacional (un mensaje de usuario seguido de uno de un agente), calculamos su embedding
 
-Para cada categoria, usan un LLM para generar attribute-focused use background paragraphs, que incluyen una discusion detallada de una experiencia del usuario. A eso le llaman *background sampling* 
+[formula]
 
-![image.png](attachment:25d70b71-1363-40c8-b68f-c785bffca402:image.png)
+Y usamos esto para hacer retrieval dada una pregunta:
 
-Despues de eso, agarran un parrafo y le piden a un LLM que proponga QA pairs (pregunta y respuesta). Supuestamente, estas preguntas a veces carecen de la profundidad y diversidad necesarias, entonces un humano las filtra y reescribe. 
+[ejemplo query, retrieval, respuesta]
 
-![image.png](attachment:8ade3985-16e8-4c5e-9086-36d4f2d603ca:image.png)
+Es posible que ustedes quieran usar algo similar, pero para arrancar nosotros les proveemos algunos embeddings precomputados para que puedan correr el ejemplo. Para descargar los embeddings precomputados, corran
 
-Una vez hecho esto, tienen preguntas construidas a partir de mensajes de usuarios. Lo que se hace a continuacion es generar las demás sesiones.
+```sh
+TODO
+```
 
-[PENDIENTE: Evidence Session Construction y History Compilation]
+### API Keys
 
-### 3.3 Metricas de Evaluación
+Si eligen correr el benchmark usando una api, van a necesitar una api key. La mejor forma de hacerlo es creando un `.env` y configurando la `OPENAI_API_KEY`
 
-**Question Answering:** Como las respuestas son abiertas, no sería correcto usar *exact matching* para evaluar las respuestas. Por eso proponen usar un LLM para evaluar las respuestas, lo que comunmente se denomina *LLM as a judge*. Especifican que este metodo coincide un 97% de las veces con el juicio de un humano.
+### Correr el benchmark
 
-**Memory Recall:** Como el benchmark tiene, para cada pregunta, una *label* de la ubicacion de la respuesta, se puede medir si el sistema encontro correctamente la justificacion a la pregunta. Para eso, proponen usar 
+Finalmente, para correr el benchmark:
 
-- Recall@k [PENDIENTE: Explicar]
-- NDCG@k [PENDIENTE: Explicar]
+```sh
+uv run main.py
+```
 
-### 3.4 LongMemEval es desafiante para sistemas comerciales
+o
 
-## 4. Formulacion del problema Long-Term Memory System
+```sh
+python main.py
+```
 
-## 5. Experimentos realizados
+### Analizar resultados
+
+En `notebooks/rag_result_eval.ipynb` pueden ver un analisis bastante generico de los resultados. Como veran, los resultados estan segmentados segun tipo de pregunta. Esperamos que ustedes reporten los resultados de esa manera, porque los distintos tipos suelen tener distinta dificultad.

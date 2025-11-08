@@ -1,4 +1,4 @@
-from src.core.LongMemEvalDataset import LongMemEvalInstance
+from src.datasets.LongMemEvalDataset import LongMemEvalInstance
 
 class JudgeAgent:
     def __init__(self, model):

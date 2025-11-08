@@ -3,8 +3,8 @@ import os
 import pandas as pd
 from src.models.LiteLLMModel import LiteLLMModel
 from src.agents.judge.JudgeAgent import JudgeAgent
-from src.core.LongMemEvalDataset import LongMemEvalDataset
-from src.core.Config import Config
+from src.datasets.LongMemEvalDataset import LongMemEvalDataset
+from config.config import Config
 from src.models.Model import Model
 from src.models.QwenModel import QwenModel
 from src.agents.rag.RAGAgent import RAGAgent

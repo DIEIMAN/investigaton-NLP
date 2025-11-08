@@ -1,6 +1,6 @@
 from dotenv import load_dotenv
 from src.experiments.pass_whole_context.longmemeval_experiment import run_experiment
-from src.core.Config import Config, MemoryModelConfig
+from config.config import Config, MemoryModelConfig
 
 
 load_dotenv()
