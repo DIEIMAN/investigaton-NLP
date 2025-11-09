@@ -78,11 +78,9 @@ Luego se utiliza para realizar *retrieval*:
 
 [ejemplo query, retrieval, respuesta]
 
-Incluimos embeddings precomputados para acelerar las primeras ejecuciones. Para descargarlos, ejecutá:
+Incluimos embeddings precomputados para acelerar las primeras ejecuciones, pueden encontrarlos aca: https://drive.google.com/file/d/1V2IzQVtQhpUhUCLDxFmGz2Xf4X-B-1et/view?usp=sharing
 
-```sh
-TODO
-```
+descarguenlos y ponganlos en `data/rag/embeddings/`
 
 ### API Keys
 
@@ -105,3 +103,9 @@ python main.py
 ### Analizar resultados
 
 En `notebooks/rag_result_eval.ipynb` encontrarás un análisis general de los resultados, segmentado por tipo de pregunta. Recomendamos reportar las métricas siguiendo esa segmentación, ya que cada categoría presenta distintos niveles de dificultad.
+
+Para correr este notebook con el mismo env, deben hacer primero 
+
+```sh
+uv pip install ipykernel
+```
