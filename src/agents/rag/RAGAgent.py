@@ -9,7 +9,6 @@ from litellm import embedding
 
 
 def embed_text(message, embedding_model_name):
-    # NOTE: This is using azure embeddings. If you want, you can change it to openai
     response = embedding(model=embedding_model_name, input=message)
     return response.data[0]["embedding"]
 

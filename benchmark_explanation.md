@@ -1,93 +1,186 @@
+# Explicación del Benchmark y de criterios de evaluación para el Investigathon de YHat
 
-# LongMemEval - Resumen del Paper
-# Resumen
+## 1. Introducción
 
-While the length of the history is freely extensible, we provide two standard settings
-for consistent comparison: 
+LongMemEval es un benchmark diseñado para evaluar sistemas de memoria de largo plazo en asistentes conversacionales. A diferencia de tareas clásicas de QA, acá el foco está en medir **si un sistema puede recordar, actualizar, sintetizar y recuperar información dispersa en historiales extensos**.
 
-- LONGMEMEVALS with approximately 115k tokens per problem
-- LONGMEMEVALM with 500 sessions (around 1.5 million tokens).
+En este documento explicamos:
 
-## 3. LongMemEval
+- Cómo está formulado el benchmark original de LongMemEval.  
+- Qué habilidades mide y cómo se construyen las instancias.  
+- Cómo evaluamos en este track del Investigathón, incluyendo nuestro *own benchmark extension* con preguntas nuevas.  
+- Qué deben entregar los equipos y cómo será evaluado.
 
-### 3.1 Formulation
+---
 
-Una instancia de su benchmark es una 
+## 2. Version del Benchmark Utilizado
 
-Una 4-upla $(S, q, t_q, a)$
+En esta competencia vamos a usar la version S de LongMemEval que tiene una secuencia de sesiones que llega a ~115k tokens en total
 
-Una secuencia de sesiones $S ≡
-[(t_1, S_1),(t_2, S_2), ...,(t_N , S_N )]$ ordenada cronologicamente
+### 2.1 Formulación
 
-- Acá, $S_i$ es una interaccion multi-turno entre un usuario y un asistente
-- $t_i$ es el timestamp de la sesion
+Cada instancia del benchmark es una **4-upla**:
 
-Ademas, plantean que cada sesion puede descomponerse en *rounds*, donde un *round* es un mensaje de usuario seguido por uno de asistente.
+\[
+$(S, q, a)$
+\]
 
-En la evaluación:
+donde:
 
-- Se provee $S$ al sistema, sesion por sesion
-- Se provee $q$ y $t_q > t_N$, que representan la pregunta y su respectiva fecha.
-- $a$ es una frase corta que indica la respuesta, pues en algunos casos la pregunta es *open-ended*
+- **S** es una secuencia de sesiones ordenadas cronológicamente:  
+  
+  $S \equiv [(t_1, S_1), (t_2, S_2), ..., (t_N, S_N)]$
 
-### 3.2 Benchmark Curation
+- Cada **Sᵢ** es una interacción multi-turno entre usuario y asistente. Cada mensaje cuenta con un timestamp temporal  
+- Cada sesión se puede descomponer en *rounds*: un mensaje del usuario seguido de uno del asistente.  
+- **q** es la pregunta final.  
+- **a** es la respuesta correcta (corta y concisa).
 
-El benchmark apunta a evaluar cinco cuestiones:
+### ¿Cómo se evalúa?
 
-- **Information Extraction (IE):** Ability to recall specific information from extensive
-interactive histories, including the details mentioned by either the user or the assistant.
-- **Multi-Session Reasoning (MR):** Ability to synthesize the information across multiple
-history sessions to answer complex questions that involve aggregation and comparison
-- **Knowledge Updates (KU)**: Ability to recognize the changes in the user’s personal
-information and update the knowledge of the user dynamically over time.
-- **Temporal Reasoning (TR):** Awareness of the temporal aspects of user information,
-including both explicit time mentions and timestamp metadata in the interactions.
-- **Abstention (ABS):** Ability to identify questions seeking unknown information, i.e.,
-information not mentioned by the user in the interaction history, and answer “I don’t know”.
+- El sistema recibe el historial completo `S` el cual debe procesar de alguna manera (puede ser RAG como vamos a mostrar o cualquier sistema que se les ocurra).  
+- Luego se le da la pregunta `q`.  
+- Debe generar una respuesta que será evaluada por un LLM (ver sección Métricas).
 
-Para hacer esto, el benchmark propone siete tipos de preguntas:
+---
 
-- **Single-session-user**
-- **single-session-assistant**
+## 3. Qué mide LongMemEval
+
+El benchmark evalúa cinco habilidades fundamentales:
+
+### **1. Information Extraction (IE)**  
+Recordar detalles específicos del historial, dichos por el usuario o por el asistente.
+
+### **2. Multi-Session Reasoning (MR)**  
+Integrar información de distintas sesiones para responder preguntas que requieren síntesis.
+
+### **3. Knowledge Updates (KU)**  
+Detectar y actualizar la información del usuario a medida que cambia en el tiempo.
+
+### **4. Temporal Reasoning (TR)**  
+Razonar sobre fechas, secuencias y eventos ordenados temporalmente.
+
+### **5. Abstention (ABS)**  
+Reconocer cuando una pregunta no puede ser respondida con la información disponible y devolver "I don’t know".
+
+---
+
+## 4. Tipos de Preguntas
+
+LongMemEval genera siete categorías principales:
+
+- **Single-session-user**  
+- **Single-session-assistant**  
 - **Single-session-preference**
-- **multi-session (MR)**
-- **knowledge-update (KU)**
-- **Temporal-reasoning (TR)**
-- **Abstention:** No aparece como un tipo de pregunta en el dataset, pero son 30 preguntas modificadas para evaluar si el modelo puede detectar que no tiene información suficiente y abstenerse.
+- **Multi-session** (MR)
+- **Knowledge-update** (KU)
+- **Temporal-reasoning** (TR)
+- **Abstention** (30 preguntas diseñadas para medir no-alucinación)
 
-![image.png](attachment:5e9522dd-8ce0-44df-8331-6e069c41d39b:image.png)
+Cada categoría captura un patrón distinto del comportamiento esperado de un asistente memorioso.
 
-Definen una ontologia con 164 atributos en cinco categorias:
+---
 
-- lifestyle
-- belongings
-- life events
-- situations context
-- demographic information
+## 5. Cómo se construye el benchmark original
 
-Para cada categoria, usan un LLM para generar attribute-focused use background paragraphs, que incluyen una discusion detallada de una experiencia del usuario. A eso le llaman *background sampling* 
+El benchmark define 164 atributos organizados en:
 
-![image.png](attachment:25d70b71-1363-40c8-b68f-c785bffca402:image.png)
+- lifestyle  
+- belongings  
+- life events  
+- situation context  
+- demographic information  
 
-Despues de eso, agarran un parrafo y le piden a un LLM que proponga QA pairs (pregunta y respuesta). Supuestamente, estas preguntas a veces carecen de la profundidad y diversidad necesarias, entonces un humano las filtra y reescribe. 
+### 5.1 Background sampling  
+Para cada atributo, un LLM genera un párrafo narrado desde la perspectiva del usuario.
 
-![image.png](attachment:8ade3985-16e8-4c5e-9086-36d4f2d603ca:image.png)
+### 5.2 QA generation  
+A partir del párrafo, otro modelo genera pares (pregunta, respuesta).  
+Estas preguntas luego pasan por revisión humana para calidad y diversidad.
 
-Una vez hecho esto, tienen preguntas construidas a partir de mensajes de usuarios. Lo que se hace a continuacion es generar las demás sesiones.
+### 5.3 Evidence Session Construction *(faltante en tu texto)*  
+Los autores generan sesiones adicionales que contienen la evidencia necesaria para responder las preguntas, pero distribuidas y mezcladas con ruido conversacional realista.
 
-[PENDIENTE: Evidence Session Construction y History Compilation]
+### 5.4 History Compilation  
+Se ensamblan todas las sesiones en orden temporal, formando historiales largos y complejos.
 
-### 3.3 Metricas de Evaluación
+---
 
-**Question Answering:** Como las respuestas son abiertas, no sería correcto usar *exact matching* para evaluar las respuestas. Por eso proponen usar un LLM para evaluar las respuestas, lo que comunmente se denomina *LLM as a judge*. Especifican que este metodo coincide un 97% de las veces con el juicio de un humano.
+## 6. Métricas del Benchmark
 
-**Memory Recall:** Como el benchmark tiene, para cada pregunta, una *label* de la ubicacion de la respuesta, se puede medir si el sistema encontro correctamente la justificacion a la pregunta. Para eso, proponen usar 
+### 6.1 Question Answering (QA Accuracy)
 
-- Recall@k [PENDIENTE: Explicar]
-- NDCG@k [PENDIENTE: Explicar]
+Dado que las respuestas son abiertas, no se usa exact match.  
+El benchmark utiliza **LLM-as-a-judge**.
+---
 
-### 3.4 LongMemEval es desafiante para sistemas comerciales
+# 7. Benchmark especial del Investigathón (muy importante)
 
-## 4. Formulacion del problema Long-Term Memory System
+Para este track, además del benchmark oficial, **generamos nuestro propio conjunto adicional** con 500 preguntas adicionales utilizando los historiales de las preguntas originales de las cuales les entregaremos:
 
-## 5. Experimentos realizados
+### **✔ 250 nuevas preguntas con sus respuestas**  
+Podran usar estas preguntas como set de evaluación para evaluar el score de su sistema
+
+### **✔ Otras 250 preguntas, pero sin las respuestas**  
+Este sera el set de held out que usaremos nosotros para evaluar la calidad de sus sistemas. 
+
+### **Entrega OBLIGATORIA**  
+Deben subir un archivo con las respuestas para estas 250 preguntas:
+
+**📅 Fecha límite para la entrega de respuesta de set de HELD OUT:**  
+**11/12 a las 16:00 (24hs antes de la final del 12/12)**
+
+### **Evaluación**  
+La evaluación la haremos automáticamente usando **GPT-5-mini** con el mismo prompt del `JudgeAgent` incluido en este repositorio.
+
+Cada equipo verá su **score final** durante la presentación.
+
+Recomendamos usar el mismo modelo ustedes para la evaluacion. 
+
+---
+
+# 8. Restricción de modelos permitidos
+
+Cada equipo puede usar **cualquier modelo de hasta 4B parámetros**.
+
+Esto incluye:
+
+- Modelos locales (Qwen3-4B, Gemma-3-4B, etc.)  
+
+El objetivo es evaluar **memoria y eficiencia**, no fuerza bruta ni modelos gigantes.
+
+---
+
+# 9. Qué deben reportar los equipos
+
+Los resultados de su investigación deben incluir al menos estas métricas:
+
+### **1. Score**  
+Exactitud promedio según el juez LLM.
+
+### **2. Latencia**  
+Tiempo promedio por pregunta.
+
+### **3. Latencia IQR**  
+(IQR = *Interquartile Range*)  
+Es la dispersión entre el percentil 25 y el percentil 75 de las latencias.  
+Sirve para medir estabilidad:  
+- un IQR bajo = sistema consistente  
+- un IQR alto = impredecible/variable
+
+### **4. AVG Context Length**  
+Longitud promedio del contexto enviado al modelo por pregunta.  
+Esto permite comparar:  
+- métodos que leen todo el historial (FullContext)  
+- métodos que recuperan poco (RAG)  
+- métodos con compresión o resúmenes dinámicos
+
+Incluyan estas métricas en sus tablas y gráficas.
+
+---
+
+# 10. Criterios de Evaluación
+Ademas del resultado final en el set de held out, se evaluara en los equipos el proceso completo de investigacion, desde la prolijidad hasta la creatividad de las ideas. 
+
+
+---
