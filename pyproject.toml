@@ -9,6 +9,7 @@ dependencies = [
     "datasets",
     "huggingface-hub",
     "pydantic",
+    "gdown",
 ]
 
 [project.optional-dependencies]

@@ -62,6 +62,8 @@ uv pip install torch transformers
 
 ### Descarga de datasets
 
+#### Dataset LongMemEval original
+
 Con el entorno configurado, descargá los datasets del benchmark:
 
 ```sh
@@ -75,19 +77,20 @@ source .venv/bin/activate
 python scripts/download_dataset.py
 ```
 
-### Descarga de embeddings
+#### Dataset Investigathon (Competencia)
 
-Uno de los módulos de memoria incluidos utiliza embeddings. Para cada mensaje se calcula un embedding:
+Para el Investigathon, descargá los datasets específicos de la competencia desde Google Drive:
 
-[formula]
+```sh
+python data/download_investigathon_data.py
+```
 
-Luego se utiliza para realizar *retrieval*:
+Este script descargará automáticamente 3 archivos:
+- **Investigathon_LLMTrack_Evaluation_oracle.json** (6.1 MB) - Set de evaluación con respuestas cortas
+- **Investigathon_LLMTrack_Evaluation_s_cleaned.json** (128.2 MB) - Set de evaluación completo con respuestas
+- **Investigathon_LLMTrack_HeldOut_s_cleaned.json** (128.2 MB) - Set de held-out SIN respuestas (para submisión final)
 
-[ejemplo query, retrieval, respuesta]
-
-Incluimos embeddings precomputados para acelerar las primeras ejecuciones, pueden encontrarlos aca: https://drive.google.com/file/d/1V2IzQVtQhpUhUCLDxFmGz2Xf4X-B-1et/view?usp=sharing
-
-descarguenlos y ponganlos en `data/rag/embeddings/`
+Los archivos se guardarán en `data/investigathon/`
 
 ### API Keys
 
@@ -95,7 +98,9 @@ Si vas a correr el benchmark con una API externa, configurá un archivo `.env` c
 
 ### Correr el benchmark
 
-Para ejecutar el benchmark:
+#### Benchmark original de LongMemEval
+
+Para ejecutar el benchmark original:
 
 ```sh
 uv run main.py
@@ -106,6 +111,54 @@ o bien:
 ```sh
 python main.py
 ```
+
+#### Evaluación en el dataset del Investigathon
+
+Para evaluar tu sistema en el **set de evaluación** (que incluye respuestas correctas):
+
+```sh
+python run_evaluation.py --dataset_type full --n_samples 250
+```
+
+Este script usa la **misma configuración RAG que `main.py`**. 
+
+Parámetros:
+- `--dataset_type`: `oracle` (solo sesiones relevantes) o `full` (todas las ~53 sesiones, ~115k tokens) [default: `full`]
+- `--n_samples`: número de muestras a procesar [default: 250]
+
+Los resultados se guardarán en `data/results/` con métricas de accuracy.
+
+**Nota:** Para cambiar la configuración (modelo, embedding, etc.), edita la función `load_config_from_main()` en `run_evaluation.py` o modifica directamente `main.py`.
+
+#### Generar predicciones para el Held-Out Set (SUBMISIÓN FINAL)
+
+Para generar las predicciones del **set held-out** (sin respuestas, para submisión):
+
+```sh
+python run_held_out.py --n_samples 250
+```
+
+Este script usa la **misma configuración RAG que `main.py`** y genera un archivo JSON con las predicciones que debes entregar antes del **11/12 a las 16:00**.
+
+Parámetros:
+- `--n_samples`: número de muestras a procesar [default: 250]
+- `--output_file`: ruta del archivo de salida (opcional)
+
+El formato de salida será:
+
+```json
+[
+  {
+    "question_id": "...",
+    "predicted_answer": "..."
+  },
+  ...
+]
+```
+
+Los resultados se guardarán en `data/results/investigathon_heldout_*.json`
+
+**Nota:** Para cambiar la configuración (modelo, embedding, etc.), edita la función `load_config_from_main()` en `run_held_out.py` o modifica directamente `main.py`.
 
 ### Analizar resultados
 
