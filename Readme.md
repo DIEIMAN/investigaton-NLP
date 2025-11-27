@@ -39,7 +39,7 @@ def instance_from_row(self, row):
     )
 ```
 
-- **`experiments`**: implementación del pipeline experimental y utilidades para cargar modelos y módulos de memoria. En `config` pueden definir qué agente usar (`fullcontext`, `rag`, etc.), qué modelo responde, qué modelo actúa como juez y otros parámetros.
+En `config` pueden definir qué agente usar (`FullContext`, `RAG`, etc.), qué modelo responde, qué modelo actúa como juez y otros parámetros. Los scripts principales (`main.py`, `run_evaluation.py`, `run_held_out.py`) implementan el pipeline experimental directamente.
 
 
 ## Setup
@@ -62,9 +62,7 @@ uv pip install torch transformers
 
 ### Descarga de datasets
 
-#### Dataset LongMemEval original
-
-Con el entorno configurado, descargá los datasets del benchmark:
+Con el entorno configurado, descargá todos los datasets (LongMemEval original + Investigathon) con un solo comando:
 
 ```sh
 uv run scripts/download_dataset.py
@@ -77,20 +75,20 @@ source .venv/bin/activate
 python scripts/download_dataset.py
 ```
 
-#### Dataset Investigathon (Competencia)
+Este script descargará automáticamente:
 
-Para el Investigathon, descargá los datasets específicos de la competencia desde Google Drive:
+#### Dataset LongMemEval original (desde HuggingFace)
+- **longmemeval_oracle.json** - Versión original del benchmark
+- **longmemeval_s_cleaned.json** - Versión limpia del benchmark
 
-```sh
-python data/download_investigathon_data.py
-```
-
-Este script descargará automáticamente 3 archivos:
+#### Dataset Investigathon (desde Google Drive)
 - **Investigathon_LLMTrack_Evaluation_oracle.json** (6.1 MB) - Set de evaluación con respuestas cortas
 - **Investigathon_LLMTrack_Evaluation_s_cleaned.json** (128.2 MB) - Set de evaluación completo con respuestas
 - **Investigathon_LLMTrack_HeldOut_s_cleaned.json** (128.2 MB) - Set de held-out SIN respuestas (para submisión final)
 
-Los archivos se guardarán en `data/investigathon/`
+Los archivos se guardarán en:
+- `data/longmemeval/` - Datasets originales
+- `data/investigathon/` - Datasets de la competencia
 
 ### API Keys
 
