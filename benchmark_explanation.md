@@ -171,8 +171,15 @@ Esto permite comparar:
 Incluyan estas métricas en sus tablas y gráficas.
 
 ---
+# Baseline
+Además de reportar las métricas principales, cada equipo debe incluir una comparación directa contra un baseline estándar de Retrieval-Augmented Generation (RAG) bajo las mismas restricciones (modelo ≤ 4B parámetros). Este repo brinda una implementacion de este RAG y pueden encontrar las instrucciones para correrlo en README.md.
 
-# 10. Criterios de Evaluación
+
+
+Los tutores del evento no se hacen responsables de cualquier error que pueda haber en la implementacion brindada para el RAG (porfavor avisar si encuentran algun error). La idea es que no usen el repo como caja negra. Si existe algun error en el repo (si hay un error no fue hecho adrede) los equipos son responsables por haber utilizado codigo incorrecto. 
+
+
+#  Criterios de Evaluación
 Ademas del resultado final en el set de held out, se evaluara en los equipos el proceso completo de investigacion, desde la prolijidad hasta la creatividad de las ideas. 
 
 
