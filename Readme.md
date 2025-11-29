@@ -76,11 +76,11 @@ python scripts/download_dataset.py
 Este script descargará automáticamente:
 
 #### Dataset LongMemEval original (desde HuggingFace)
-- **longmemeval_oracle.json** - Versión original del benchmark
-- **longmemeval_s_cleaned.json** - Versión limpia del benchmark
+- **longmemeval_oracle.json** - Versión oraculo del dataset, cada pregunta tiene las conversaciones que realmente hay que usar para responder.
+- **longmemeval_s_cleaned.json** - Versión completa del dataset (la cual tienen que usar para trabajar)
 
 #### Dataset Investigathon (desde Google Drive)
-- **Investigathon_LLMTrack_Evaluation_oracle.json** (6.1 MB) - Set de evaluación con respuestas cortas
+- **Investigathon_LLMTrack_Evaluation_oracle.json** (6.1 MB) - Set de evaluación oraculo.
 - **Investigathon_LLMTrack_Evaluation_s_cleaned.json** (128.2 MB) - Set de evaluación completo con respuestas
 - **Investigathon_LLMTrack_HeldOut_s_cleaned.json** (128.2 MB) - Set de held-out SIN respuestas (para submisión final)
 
