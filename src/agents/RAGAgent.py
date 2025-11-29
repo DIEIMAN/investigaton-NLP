@@ -1,9 +1,7 @@
 import os
-import pickle
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
-from src.agents.MemoryAgent import MemoryAgent
 from src.datasets.LongMemEvalDataset import LongMemEvalInstance
 from litellm import embedding
 
@@ -43,7 +41,7 @@ def retrieve_most_relevant_messages(instance: LongMemEvalInstance, k: int, embed
     return most_relevant_messages
 
 
-class RAGAgent(MemoryAgent):
+class RAGAgent:
     def __init__(self, model, embedding_model_name):
         self.model = model
         self.embedding_model_name = embedding_model_name

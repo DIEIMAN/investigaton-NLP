@@ -2,8 +2,8 @@ import json
 import os
 from dotenv import load_dotenv
 from src.models.LiteLLMModel import LiteLLMModel
-from src.agents.judge.JudgeAgent import JudgeAgent
-from src.agents.rag.RAGAgent import RAGAgent
+from src.agents.JudgeAgent import JudgeAgent
+from src.agents.RAGAgent import RAGAgent
 from src.datasets.LongMemEvalDataset import LongMemEvalDataset
 from config.config import Config
 
@@ -11,7 +11,7 @@ load_dotenv()
 
 config = Config(
     memory_model_name="ollama/gemma3:4b",
-    judge_model_name="openai/gpt-5-mini",
+    judge_model_name="openai/gpt-5-mini", # alternativa: "ollama/gemma3:4b"
     longmemeval_dataset_type="short",
     longmemeval_dataset_set="investigathon_evaluation", # longmemeval, investigathon_evaluation, investigathon_held_out
     N=10,
