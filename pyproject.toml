@@ -10,16 +10,5 @@ dependencies = [
     "huggingface-hub",
     "pydantic",
     "gdown",
-]
-
-[project.optional-dependencies]
-dev = ["ipykernel"]
-
-torch = [
-    "torch",
-    "torchvision",
-    "torchaudio",
-    "transformers",
-    "accelerate",
-    "bitsandbytes",
+    "ipykernel"
 ]

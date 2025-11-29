@@ -2,8 +2,7 @@
 
 ## Introducción
 
-En un futuro cercano, los asistentes conversacionales correrán directamente *en tu celular*: modelos de LLMs pequeños, eficientes y capaces de recordar tus hábitos, tus gustos y el contexto de tus últimas conversaciones. Para que ese tipo de agentes sea posible, necesitan **módulos de memoria optimizados**: rápidos, baratos de ejecutar y sin depender de modelos gigantes.  
-Este track propone justamente eso: **explorar cómo diseñar el mejor sistema de memoria para agentes conversacionales usando modelos pequeños de LLMs**, comparando distintas estrategias y evaluando su eficiencia y calidad.
+En un futuro cercano, los asistentes conversacionales correrán directamente *en tu celular*: modelos de LLMs pequeños, eficientes y capaces de recordar tus hábitos, tus gustos y el contexto de tus últimas conversaciones. Para que ese tipo de agentes sea posible, necesitan **módulos de memoria optimizados**: rápidos, baratos de ejecutar y sin depender de modelos gigantes. Este track propone justamente eso: **explorar cómo diseñar el mejor sistema de memoria para agentes conversacionales usando modelos pequeños de LLMs**, comparando distintas estrategias y evaluando su eficiencia y calidad.
 
 Este repositorio acompaña el track de NLP del Investigathon de YHat y plantea el desafío de ampliar un asistente conversacional con un módulo de memoria.  
 Incluimos una referencia básica basada en un *semantic retriever*, que servirá como baseline.
@@ -19,9 +18,9 @@ La utilización de este proyecto es completamente opcional: pueden usarlo tal cu
 
 La carpeta principal es `src`. Allí van a encontrar:
 
-- **`models`**: implementaciones de referencia. `LiteLLM` simplifica la prueba de múltiples APIs al unificar su interfaz. Si trabajan con modelos de Hugging Face sugerimos Qwen3, que ofrece buen *reasoning* y soporte de *tools*; por eso incluimos `QwenModel`. Dependiendo del hardware y la experiencia, también pueden evaluar Ollama o vLLM.
-- **`agents`**: distintos agentes ya configurados. `JudgeAgent` evalúa si la respuesta es correcta. `FullContextAgent` envía la instancia completa de LongMemEval a un modelo con ventana de contexto amplia (por ejemplo GPT-5 o Gemini); es una alternativa directa pero costosa y poco creativa. `RAGAgent` implementa el módulo de RAG que usamos para el benchmark.
-- **`datasets`**: utilidades para cargar y representar el benchmark. Incluye la clase `LongMemEvalInstance`, alineada con la definición del paper.
+- **`models`**: implementaciones de referencia. `LiteLLM` simplifica la prueba de múltiples APIs al unificar su interfaz. Si trabajan con modelos de Hugging Face sugerimos Qwen3, que ofrece buen *reasoning* y soporte de *tools*; por eso incluimos `QwenModel`. Dependiendo del hardware y la experiencia, también pueden evaluar vLLM. En esta demo vamos a usar `ollama` para el servidor y `LiteLLM` como cliente unificado (todo esto se va a entender mas adelante). 
+- **`agents`**: distintos agentes ya configurados. `JudgeAgent` evalúa si la respuesta es correcta. `RAGAgent` implementa el módulo de RAG que usamos para el benchmark.
+- **`datasets`**: utilidades para cargar y representar el benchmark. Incluye la clase `LongMemEvalInstance`, alineada con la definición del paper. Pueden no usarla, o usarla simplemente como inspiracion.
 
 ```python
 def instance_from_row(self, row):
@@ -39,12 +38,17 @@ def instance_from_row(self, row):
     )
 ```
 
-En `config` pueden definir qué agente usar (`FullContext`, `RAG`, etc.), qué modelo responde, qué modelo actúa como juez y otros parámetros. Los scripts principales (`main.py`, `run_evaluation.py`, `run_held_out.py`) implementan el pipeline experimental directamente.
+En `config` pueden definir qué modelo responde, qué modelo actúa como juez y otros parámetros. Los scripts principales (`main.py`, `run_evaluation.py`, `run_held_out.py`) implementan el pipeline experimental directamente.
 
 
 ## Setup
 
-Recomendamos utilizar `uv` para gestionar el entorno. Podés descargarlo e instalarlo desde <https://docs.astral.sh/uv/getting-started/installation/>.
+Recomendamos utilizar `uv` para gestionar el entorno. 
+
+### Instalacion de uv
+
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
 
 ### Instalación de dependencias
 
@@ -52,12 +56,6 @@ Una vez instalado `uv`, sincronizá las dependencias:
 
 ```sh
 uv sync
-```
-
-Es posible que `torch` y `transformers` no se instalen automáticamente para permitirles elegir versiones específicas (por ejemplo, con soporte CUDA). La instalacion mas basica es mediante:
-
-```
-uv pip install torch transformers
 ```
 
 ### Descarga de datasets
@@ -90,9 +88,29 @@ Los archivos se guardarán en:
 - `data/longmemeval/` - Datasets originales
 - `data/investigathon/` - Datasets de la competencia
 
-### API Keys
+### Ollama
 
-Si vas a correr el benchmark con una API externa, configurá un archivo `.env` con la variable `OPENAI_API_KEY` (o la clave que corresponda a tu proveedor).
+Instalar ollama
+```sh
+curl -fsSL https://ollama.com/install.sh | sh
+```
+
+Chequear que esta corriendo
+
+```
+sudo systemctl status ollama
+```
+
+Bajar nomic-embed-text, que es el modelo de embeddings que vamos a usar
+
+```
+ollama pull nomic-embed-text
+```
+
+Bajar tambien Gemma3-4B, el modelo que vamos a usar inicialmente
+```
+ollama pull gemma3:4b
+```
 
 ### Correr el benchmark
 
