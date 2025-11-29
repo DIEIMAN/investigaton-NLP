@@ -184,3 +184,11 @@ Para correr este notebook con el mismo env, deben hacer primero
 ```sh
 uv pip install ipykernel
 ```
+# Entregable 
+📅 Fecha límite para la entrega de respuesta de set de HELD OUT:
+11/12 a las 16:00 (24hs antes de la final del 12/12).
+Vamos a enviarle en la proxima semana por mail los detalles de como enviarnos las respuestas
+
+# Aclaracion
+
+Los tutores del evento no se hacen responsables por cualquier error que pueda haber en la implementación brindada para el RAG (por favor, avisen si encuentran alguno). La idea es que no usen el repositorio como una caja negra. Si existe algún error en el repositorio (si hay un error, no fue hecho adrede), los equipos son responsables por haber utilizado código incorrecto.

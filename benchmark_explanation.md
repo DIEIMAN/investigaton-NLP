@@ -1,6 +1,6 @@
 # Explicación del Benchmark y de criterios de evaluación para el Investigathon de YHat
 
-## 1. Introducción
+## Introducción
 
 LongMemEval es un benchmark diseñado para evaluar sistemas de memoria de largo plazo en asistentes conversacionales. A diferencia de tareas clásicas de QA, acá el foco está en medir **si un sistema puede recordar, actualizar, sintetizar y recuperar información dispersa en historiales extensos**.
 
@@ -13,11 +13,11 @@ En este documento explicamos:
 
 ---
 
-## 2. Version del Benchmark Utilizado
+## Version del Benchmark Utilizado
 
 En esta competencia vamos a usar la version S de LongMemEval que tiene una secuencia de sesiones que llega a ~115k tokens en total
 
-### 2.1 Formulación
+### Formulación
 
 Cada instancia del benchmark es una **4-upla**:
 
@@ -44,7 +44,7 @@ donde:
 
 ---
 
-## 3. Qué mide LongMemEval
+## Qué mide LongMemEval
 
 El benchmark evalúa cinco habilidades fundamentales:
 
@@ -65,7 +65,7 @@ Reconocer cuando una pregunta no puede ser respondida con la información dispon
 
 ---
 
-## 4. Tipos de Preguntas
+## Tipos de Preguntas
 
 LongMemEval genera siete categorías principales:
 
@@ -81,7 +81,7 @@ Cada categoría captura un patrón distinto del comportamiento esperado de un as
 
 ---
 
-## 5. Cómo se construye el benchmark original
+## Cómo se construye el benchmark original
 
 El benchmark define 164 atributos organizados en:
 
@@ -91,14 +91,14 @@ El benchmark define 164 atributos organizados en:
 - situation context  
 - demographic information  
 
-### 5.1 Background sampling  
+### Background sampling  
 Para cada atributo, un LLM genera un párrafo narrado desde la perspectiva del usuario.
 
-### 5.2 QA generation  
+### QA generation  
 A partir del párrafo, otro modelo genera pares (pregunta, respuesta).  
 Estas preguntas luego pasan por revisión humana para calidad y diversidad.
 
-### 5.3 Evidence Session Construction *(faltante en tu texto)*  
+### 5.3 Evidence Session Construction
 Los autores generan sesiones adicionales que contienen la evidencia necesaria para responder las preguntas, pero distribuidas y mezcladas con ruido conversacional realista.
 
 ### 5.4 History Compilation  
@@ -106,13 +106,13 @@ Se ensamblan todas las sesiones en orden temporal, formando historiales largos y
 
 ---
 
-## 6. Métricas del Benchmark
+## Métricas del Benchmark
 
 Dado que las respuestas son abiertas, no se usa exact match.  
-El benchmark utiliza **LLM-as-a-judge**.
+El benchmark utiliza **LLM-as-a-judge**. Deben usar el mismo prompt dado en este repo
 ---
 
-# 8. Restricción de modelos permitidos
+# Restricción de modelos permitidos
 
 Cada equipo puede usar **cualquier modelo de hasta 4B parámetros** para ejecutar cualquier parte del sistema que lleve a la respuesta a la pregunta.
 
@@ -122,7 +122,7 @@ Esto incluye:
 
 El objetivo es evaluar **memoria y eficiencia**, no fuerza bruta ni modelos gigantes.
 
-# 7. Benchmark especial del Investigathón (muy importante)
+# Benchmark especial del Investigathón (muy importante)
 
 Para este track, además del benchmark oficial, **generamos nuestro propio conjunto adicional** con 500 preguntas adicionales utilizando los historiales de las preguntas originales de las cuales les entregaremos:
 
@@ -149,7 +149,7 @@ Recomendamos usar el mismo modelo ustedes para la evaluacion.
 
 ---
 
-# 9. Qué deben reportar los equipos
+# Qué deben reportar los equipos
 
 Los resultados de su investigación deben incluir al menos estas métricas:
 
@@ -171,8 +171,16 @@ Esto permite comparar:
 Incluyan estas métricas en sus tablas y gráficas.
 
 ---
+# Baseline
+Además de reportar las métricas principales, cada equipo debe incluir una comparación directa contra un baseline estándar de Retrieval-Augmented Generation (RAG) bajo las mismas restricciones (modelo ≤ 4B parámetros). Este repo brinda una implementacion de este RAG y pueden encontrar las instrucciones para correrlo en README.md.
 
-# 10. Criterios de Evaluación
+![Diagrama](images/RAGImage.png)
+
+
+Los tutores del evento no se hacen responsables por cualquier error que pueda haber en la implementación brindada para el RAG (por favor, avisen si encuentran alguno). La idea es que no usen el repositorio como una caja negra. Si existe algún error en el repositorio (si hay un error, no fue hecho adrede), los equipos son responsables por haber utilizado código incorrecto.
+
+
+#  Criterios de Evaluación
 Ademas del resultado final en el set de held out, se evaluara en los equipos el proceso completo de investigacion, desde la prolijidad hasta la creatividad de las ideas. 
 
 
