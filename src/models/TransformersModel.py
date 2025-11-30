@@ -42,7 +42,7 @@ class TransformersModel(Model):
         reasoning_content, content = self.extract_thinking(content)
         tool_calls, content = self.extract_tool_calls(content)
         return reasoning_content, tool_calls, content
-
+##cjkdskndsjk
     def reply(self, messages, tools=None):
         formatted_input = self.tokenizer.apply_chat_template(
             messages,
