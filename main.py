@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import time
 from dotenv import load_dotenv
 from src.models.LiteLLMModel import LiteLLMModel #Modelo que responde usando el RAG
 from src.agents.JudgeAgent import JudgeAgent #Juez
@@ -109,7 +110,12 @@ for instance in longmemeval_dataset[: config.N]:
         print(f"Skipping {instance.question_id} because it already exists", flush=True)
         continue
 
-    predicted_answer = memory_agent.answer(instance)     # Usamos el agente de memoria (RAG) para generar una respuesta
+     #Medimos la latencia de todo el proceso de respuesta del agente de memoria
+    start_time = time.time()
+    # Llamamos al RAGAgent devuelve una TUPLA: (predicted_answer, context_info(Palabras, Chars))
+    predicted_answer, context_info = memory_agent.answer(instance)
+    # Latencia total en segundos
+    latency = time.time() - start_time
 
 
     if config.longmemeval_dataset_set != "investigathon_held_out":     # Si no es held-out, también evaluamos con el juez
@@ -122,6 +128,10 @@ for instance in longmemeval_dataset[: config.N]:
             "question_id": instance.question_id,
             "question": instance.question,
             "predicted_answer": predicted_answer,
+            # métricas nuevas:
+            "latency_seconds": latency,
+            "context_messages": context_info["context_messages"],
+            "context_chars": context_info["context_chars"],
         }
         # En los sets con ground truth guardamos también la respuesta correcta y el flag de correctitud
         if config.longmemeval_dataset_set != "investigathon_held_out":
@@ -136,6 +146,8 @@ for instance in longmemeval_dataset[: config.N]:
         if config.longmemeval_dataset_set != "investigathon_held_out":
             print(f"  Ground Truth: {instance.answer}")
             print(f"  Correct: {answer_is_correct}")
+        print(f"  Latency (s): {latency:.2f}")
+        print(f"  Context messages: {context_info['context_messages']}, chars: {context_info['context_chars']}")
         print("-" * 100)
 
 print("EVALUATION COMPLETE")

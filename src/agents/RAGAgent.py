@@ -117,6 +117,22 @@ class RAGAgent:
     def answer(self, instance: LongMemEvalInstance):
         """
         Responde la pregunta de una instancia usando RAG baseline.
+        context_info: dict con métricas del contexto usado
+        Devuelve DOS cosas (tupla):
+
+        1. predicted_answer: str
+           → la respuesta generada por el modelo.
+
+        2. context_info: dict
+           → métricas sobre el contexto que usamos, por ejemplo:
+             {
+               "context_messages": 10,
+               "context_chars": 2345
+             }
+
+        En main.py lo usamos así:
+            predicted_answer, context_info = memory_agent.answer(instance)
+        
         """
 
         # Recuperamos los 10 mensajes más relevantes del historial.
@@ -127,9 +143,21 @@ class RAGAgent:
             self.embedding_model_name,
         )
 
+        # Construimos un string legible con la evidencia
+        context_str = ""
+        for msg in most_relevant_messages:
+            context_str += f"[{msg['role']}] {msg['content']}\n"
+
+
+        context_info = {
+            "context_messages": len(most_relevant_messages),
+            "context_chars": len(context_str),
+        }
+
         # Prompt muy básico: incluye la evidencia como lista de mensajes en bruto.
         # Podría mejorarse formateando como diálogo legible, agregando instrucciones
         # de no alucinar, razonamiento temporal, etc.
+
         prompt = f"""
         You are a helpful assistant that answers a question based on the evidence.
         The evidence is: {most_relevant_messages}
@@ -143,4 +171,4 @@ class RAGAgent:
         # Llamada al modelo de lenguaje unificado por LiteLLMModel
         answer = self.model.reply(messages)
 
-        return answer
+        return answer, context_info
