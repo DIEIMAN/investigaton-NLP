@@ -1,70 +1,200 @@
 import os
+import time
+import math
+import re
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+from typing import List, Tuple, Optional, Dict
 
-# Tipo LongMemEvalInstance describe una instancia del benchmark
 from src.datasets.LongMemEvalDataset import LongMemEvalInstance
+from litellm import embedding  # wrapper unificado de LiteLLM
 
-# Función de embeddings unificada de LiteLLM
-from litellm import embedding
+# --- Configuración de reintentos para embedding ---
+MAX_RETRIES = 3
+BACKOFF_FACTOR = 1.5  # exponencial
 
 
-def embed_text(message, embedding_model_name):
+def robust_embed_texts(
+    texts: List[str],
+    embedding_model_name: str,
+    api_base: Optional[str] = None,
+    provider_hint: Optional[str] = None,
+) -> List[Optional[List[float]]]:
     """
-    Dado un texto `message`, devuelve su embedding usando el modelo especificado.
-
-    Usa litellm.embedding para abstraer la API del proveedor (ollama, openai, etc.).
+    Recibe una lista de textos y devuelve una lista de embeddings (o None si falla para un texto).
+    Hace la llamada en batch cuando sea posible y reintenta en caso de errores transitorios.
+    Parámetros:
+      - texts: lista de strings a embedir
+      - embedding_model_name: nombre del modelo (ej: "ollama/nomic-embed-text" o "nomic-embed-text")
+      - api_base: opcional, por ejemplo "http://localhost:11434"
+      - provider_hint: opcional, si LiteLLM reclama el 'provider' (p.ej "ollama")
     """
-    response = embedding(model=embedding_model_name, input=message)
-    # `response.data[0]["embedding"]` suele ser una lista de floats
-    return response.data[0]["embedding"]
+    # Remover strings vacíos y mantener indices para recomponer
+    if not texts:
+        return []
+
+    # Intentar en batch; litellm.embedding típicamente acepta lista en input
+    attempt = 0
+    while attempt < MAX_RETRIES:
+        try:
+            kwargs = {"model": embedding_model_name, "input": texts}
+            if api_base:
+                kwargs["api_base"] = api_base
+            if provider_hint:
+                # en algunas versiones litellm requiere una forma de modelo con provider; la dejamos como hint
+                kwargs["model"] = embedding_model_name  # keep, user can pass full provider path
+            resp = embedding(**kwargs)
+            # resp.data es una lista de objetos con "embedding"
+            out = []
+            for item in resp.data:
+                if item is None or "embedding" not in item:
+                    out.append(None)
+                else:
+                    out.append(item["embedding"])
+            return out
+        except Exception as e:
+            attempt += 1
+            wait = BACKOFF_FACTOR ** attempt
+            print(f"[embed] attempt {attempt} failed: {e}. retrying in {wait:.1f}s...")
+            time.sleep(wait)
+
+    # Si falló todo, devolvemos None para cada texto
+    print("[embed] all retries failed, returning None embeddings")
+    return [None] * len(texts)
 
 
-def get_messages_and_embeddings(instance: LongMemEvalInstance, embedding_model_name):
+def chunk_text(
+    text: str,
+    chunk_size: int = 500,
+    chunk_overlap: int = 50,
+    prefer_sentence_boundary: bool = True,
+) -> List[str]:
     """
-    Para una instancia del benchmark, obtiene todos los mensajes del historial
-    (todas las sesiones) y sus embeddings correspondientes.
-
-    Implementa una caché en disco: si ya existe un archivo parquet con los
-    mensajes/embeddings para ese `question_id`, lo reutiliza.
+    Divide `text` en chunks de hasta `chunk_size` caracteres con `chunk_overlap` de solapamiento.
+    - evita cortar palabras (trata de retroceder hasta un espacio)
+    - si prefer_sentence_boundary=True intenta cortar en puntos/fin de oración cuando sea posible
     """
-    # Ruta de caché específica del modelo de embedding y de la pregunta
-    cache_path = (
-        f"data/rag/"
-        f"embeddings_{embedding_model_name.replace('/', '_')}/"
-        f"{instance.question_id}.parquet"
-    )
+    if not text:
+        return []
 
-    # Si ya calculamos embeddings para esta pregunta + modelo, leemos el parquet.
+    # Normalización básica
+    text = re.sub(r"\s+", " ", text).strip()
+    n = len(text)
+    if n <= chunk_size:
+        return [text]
+
+    chunks = []
+    start = 0
+    while start < n:
+        end = min(start + chunk_size, n)
+
+        # preferir final de oración cercano al end
+        if prefer_sentence_boundary and end < n:
+            # buscar ., ? o ! desde end-1 hacia start
+            segment = text[start:end]
+            # buscar el último punto/fin de frase en segment (excluyendo abreviaturas complicadas)
+            m = re.search(r'([\.!?])\s+[A-ZÁÉÍÓÚÑ]', text[start:end + 20])  # lookahead simple
+            # alternativa más simple: buscar el último .!? dentro del segmento
+            last_punct = max(segment.rfind('.'), segment.rfind('!'), segment.rfind('?'))
+            if last_punct != -1 and last_punct > int(0.5 * (end - start)):
+                end = start + last_punct + 1
+
+        # evitar cortar palabra: retroceder hasta el último espacio si estamos en medio de palabra
+        if end < n and text[end].isalnum():
+            last_space = text.rfind(" ", start, end)
+            if last_space != -1 and last_space > start:
+                end = last_space
+
+        chunk = text[start:end].strip()
+        if chunk:
+            chunks.append(chunk)
+
+        # mover inicio considerando overlap
+        start = end - chunk_overlap
+        if start < 0:
+            start = 0
+
+        # seguridad: si no avanzamos, forzamos avanzar para evitar loop infinito
+        if len(chunks) > 0 and start == (end - chunk_overlap) and end == n:
+            break
+
+    return chunks
+
+
+def get_messages_and_embeddings(
+    instance: LongMemEvalInstance,
+    embedding_model_name: str,
+    api_base: Optional[str] = None,
+    provider_hint: Optional[str] = None,
+    chunk_size: int = 500,
+    chunk_overlap: int = 50,
+    batch_size: int = 64,
+) -> Tuple[List[dict], List[Optional[np.ndarray]]]:
+    """
+    Obtiene (y cachea) los mensajes chunked y sus embeddings (como arrays numpy o None).
+    Retorna:
+      - messages: lista de dicts con keys: role, content, original_index, chunk_id
+      - embeddings: lista paralela de np.ndarray (float32) o None si falló embedding
+    """
+
+    cache_dir = f"data/rag/embeddings_{embedding_model_name.replace('/', '_')}"
+    cache_path = os.path.join(cache_dir, f"{instance.question_id}.parquet")
+
+    # Leer caché si existe
     if os.path.exists(cache_path):
         df = pd.read_parquet(cache_path)
-        return df["messages"].tolist(), df["embeddings"].tolist()
+        # df["embeddings"] debería ser listas de floats o None
+        messages = df["messages"].tolist()
+        embeddings_raw = df["embeddings"].tolist()
+        embeddings = [
+            np.array(e, dtype=np.float32) if (e is not None) else None for e in embeddings_raw
+        ]
+        return messages, embeddings
 
-    # Si no existe caché, calculamos todo desde cero.
+    # Si no hay caché, construir lista de chunks
     messages = []
-    embeddings = []
+    texts_to_embed = []
+    # Mantener mapeo de index en texts_to_embed -> index en messages
+    mapping = []
 
-    # Recorremos todas las sesiones y todos los mensajes
-    for session in tqdm(instance.sessions, desc="Embedding sessions"):
-        for message in session.messages:
-            # Guardamos el mensaje tal cual viene (dict con role + content)
-            messages.append(message)
-            # Embedding del texto "role: content", para incorporar el rol en el vector
-            embeddings.append(
-                embed_text(
-                    f"{message['role']}: {message['content']}",
-                    embedding_model_name,
-                )
-            )
+    for session_idx, session in enumerate(tqdm(instance.sessions, desc="Chunking sessions")):
+        for msg_idx, message in enumerate(session.messages):
+            role = message.get("role", "user")
+            content = message.get("content", "")
+            # chunkear el contenido
+            chunks = chunk_text(content, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+            for cix, chunk in enumerate(chunks):
+                msg_record = {
+                    "role": role,
+                    "content": chunk,
+                    "original_session": session_idx,
+                    "original_index": msg_idx,
+                    "chunk_id": cix,
+                }
+                messages.append(msg_record)
+                texts_to_embed.append(f"{role}: {chunk}")
+                mapping.append(len(messages) - 1)
 
-    # Creamos carpetas necesarias para guardar el parquet
-    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+    # Embedir en batches
+    embeddings: List[Optional[np.ndarray]] = [None] * len(messages)
+    for i in tqdm(range(0, len(texts_to_embed), batch_size), desc="Embedding batches"):
+        batch_texts = texts_to_embed[i : i + batch_size]
+        batch_embeddings = robust_embed_texts(batch_texts, embedding_model_name, api_base, provider_hint)
+        for j, emb in enumerate(batch_embeddings):
+            global_idx = i + j
+            msg_idx = mapping[global_idx]
+            if emb is None:
+                embeddings[msg_idx] = None
+            else:
+                embeddings[msg_idx] = np.array(emb, dtype=np.float32)
 
-    # Guardamos mensajes y embeddings como DataFrame para acelerar corridas futuras
-    pd.DataFrame({"messages": messages, "embeddings": embeddings}).to_parquet(
-        cache_path
-    )
+    # Asegurar carpeta y guardar caché (guardamos listas simples para parquet)
+    os.makedirs(cache_dir, exist_ok=True)
+    # convertir embeddings a listas o None para parquet
+    embeddings_for_disk = [e.tolist() if e is not None else None for e in embeddings]
+    df = pd.DataFrame({"messages": messages, "embeddings": embeddings_for_disk})
+    df.to_parquet(cache_path, index=False)
 
     return messages, embeddings
 
@@ -73,102 +203,88 @@ def retrieve_most_relevant_messages(
     instance: LongMemEvalInstance,
     k: int,
     embedding_model_name: str,
-):
+    api_base: Optional[str] = None,
+    provider_hint: Optional[str] = None,
+) -> List[dict]:
     """
-    Dado una instancia y un entero k:
-    - embebe la pregunta,
-    - calcula similitud (producto punto) entre la pregunta y cada mensaje del historial,
-    - devuelve los k mensajes más similares.
-
-    Este es el "retriever" del baseline: RAG a nivel de mensaje individual.
+    Recupera los k mensajes más relevantes usando producto punto entre embeddings (cosine opcional).
+    Ignora mensajes cuyo embedding sea None.
     """
-    # Embedding de la pregunta final
-    question_embedding = embed_text(instance.question, embedding_model_name)
+    # Embedding de la pregunta
+    q_emb_list = robust_embed_texts([instance.question], embedding_model_name, api_base, provider_hint)
+    q_emb = q_emb_list[0]
+    if q_emb is None:
+        raise RuntimeError("No se pudo generar embedding para la pregunta.")
 
-    # Obtenemos todos los mensajes del historial y sus embeddings (con caché)
-    messages, embeddings = get_messages_and_embeddings(instance, embedding_model_name)
+    q_emb = np.array(q_emb, dtype=np.float32)
 
-    # Convertimos a matriz/vector y calculamos similitud por producto punto
-    similarity_scores = np.dot(embeddings, question_embedding)
+    messages, embeddings = get_messages_and_embeddings(
+        instance,
+        embedding_model_name,
+        api_base=api_base,
+        provider_hint=provider_hint,
+    )
 
-    # Ordenamos los índices por similitud descendente
-    most_relevant_messages_indices = np.argsort(similarity_scores)[::-1][:k]
+    # Filtrar mensajes con embeddings válidos
+    valid_indices = [i for i, e in enumerate(embeddings) if e is not None]
+    if not valid_indices:
+        return []
 
-    # Seleccionamos los mensajes más relevantes
-    most_relevant_messages = [messages[i] for i in most_relevant_messages_indices]
+    mat = np.stack([embeddings[i] for i in valid_indices], axis=0)  # shape (M, D)
+
+    # normalizar para usar cosine similarity (opcionalmente se puede usar dot product directo)
+    def safe_normalize(x: np.ndarray) -> np.ndarray:
+        norm = np.linalg.norm(x)
+        if norm == 0 or math.isnan(norm):
+            return x
+        return x / norm
+
+    qn = safe_normalize(q_emb)
+    matn = np.array([safe_normalize(row) for row in mat])
+
+    scores = matn @ qn  # cosine similitudes
+    # obtener top-k sobre los índices válidos
+    topk_idx = np.argsort(scores)[::-1][:k]
+    selected_global_indices = [valid_indices[i] for i in topk_idx]
+    most_relevant_messages = [messages[i] for i in selected_global_indices]
 
     return most_relevant_messages
 
 
 class RAGAgent:
-    """
-    Agente de RAG muy simple:
-
-    1. Usa embeddings para recuperar los k mensajes más similares a la pregunta.
-    2. Construye un prompt con esos mensajes como "evidence".
-    3. Llama al modelo de lenguaje para generar la respuesta.
-    """
-
-    def __init__(self, model, embedding_model_name: str):
-        # `model` es un LiteLLMModel (o algo compatible) con método `reply`
+    def __init__(self, model, embedding_model_name: str, api_base: Optional[str] = None, provider_hint: Optional[str] = None):
         self.model = model
         self.embedding_model_name = embedding_model_name
+        self.api_base = api_base
+        self.provider_hint = provider_hint
 
-    def answer(self, instance: LongMemEvalInstance):
-        """
-        Responde la pregunta de una instancia usando RAG baseline.
-        context_info: dict con métricas del contexto usado
-        Devuelve DOS cosas (tupla):
-
-        1. predicted_answer: str
-           → la respuesta generada por el modelo.
-
-        2. context_info: dict
-           → métricas sobre el contexto que usamos, por ejemplo:
-             {
-               "context_messages": 10,
-               "context_chars": 2345
-             }
-
-        En main.py lo usamos así:
-            predicted_answer, context_info = memory_agent.answer(instance)
-        
-        """
-
-        # Recuperamos los 10 mensajes más relevantes del historial.
-        # Nota: k=10 está hardcodeado; esto es un parámetro obvio para tunear/mejorar.
-        most_relevant_messages = retrieve_most_relevant_messages(
+    def answer(self, instance: LongMemEvalInstance, k: int = 10) -> Tuple[str, Dict]:
+        most_relevant = retrieve_most_relevant_messages(
             instance,
-            10,
+            k,
             self.embedding_model_name,
+            api_base=self.api_base,
+            provider_hint=self.provider_hint,
         )
 
-        # Construimos un string legible con la evidencia
         context_str = ""
-        for msg in most_relevant_messages:
+        for msg in most_relevant:
             context_str += f"[{msg['role']}] {msg['content']}\n"
 
-
         context_info = {
-            "context_messages": len(most_relevant_messages),
+            "context_messages": len(most_relevant),
             "context_chars": len(context_str),
         }
 
-        # Prompt muy básico: incluye la evidencia como lista de mensajes en bruto.
-        # Podría mejorarse formateando como diálogo legible, agregando instrucciones
-        # de no alucinar, razonamiento temporal, etc.
+        prompt = (
+            "You are a helpful assistant that answers a question based on the evidence below.\n\n"
+            f"Evidence:\n{context_str}\n"
+            f"Question: {instance.question}\n\n"
+            "Provide a concise, factual answer. If the answer is not in the evidence, say you don't know."
+        )
 
-        prompt = f"""
-        You are a helpful assistant that answers a question based on the evidence.
-        The evidence is: {most_relevant_messages}
-        The question is: {instance.question}
-        Return the answer to the question.
-        """
-
-        # Formato de mensajes estilo ChatCompletion
         messages = [{"role": "user", "content": prompt}]
-
-        # Llamada al modelo de lenguaje unificado por LiteLLMModel
+        # Asumimos que self.model.reply devuelve string o estructura con text; adaptá según tu wrapper
         answer = self.model.reply(messages)
 
         return answer, context_info
