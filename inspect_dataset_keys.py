@@ -39,3 +39,4 @@ print(set(question_types))
 # Cantidad de veces que aparece cada uno
 print("\nFrecuencias de question_type:")
 print(Counter(question_types))
+    

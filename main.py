@@ -30,7 +30,7 @@ def parse_args():
     parser.add_argument(
         "--judge-model",
         type=str,
-        default="openai/gpt-5-mini",
+        default="ollama/gemma3:4b",
         help="Model name for judge agent (default: openai/gpt-5-mini)"
     )
 

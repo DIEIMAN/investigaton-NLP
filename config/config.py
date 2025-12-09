@@ -19,7 +19,7 @@ class Config(BaseModel):
     # Modelo de embeddings a utilizar en el retriever semántico.
     # Por defecto usan nomic-embed-text servido por ollama.
     embedding_model_name: str = Field(
-    default="gemini/text-embedding-004",
+    default="nomic-embed-text",
     description="Name of the embedding model",
 )
 
