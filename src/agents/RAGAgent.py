@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from typing import List, Tuple, Optional, Dict
-
+from rerankers import Reranker   # <--- NUEVO
 from src.datasets.LongMemEvalDataset import LongMemEvalInstance
 from litellm import embedding  # wrapper unificado de LiteLLM
 
@@ -258,7 +258,11 @@ class RAGAgent:
         self.api_base = api_base
         self.provider_hint = provider_hint
 
+        # ⬇️ NUEVO: inicializar el reranker
+        self.reranker = Reranker("BAAI/bge-reranker-base")
+
     def answer(self, instance: LongMemEvalInstance, k: int = 10) -> Tuple[str, Dict]:
+        # Paso 1: Recuperación por embeddings
         most_relevant = retrieve_most_relevant_messages(
             instance,
             k,
@@ -267,6 +271,24 @@ class RAGAgent:
             provider_hint=self.provider_hint,
         )
 
+        # Paso 2: Aplicar RERANKING sobre esos k documentos
+        if most_relevant:
+            docs_for_rerank = [{"text": f"{m['role']}: {m['content']}"} for m in most_relevant]
+            reranked = self.reranker.rerank(instance.question, docs_for_rerank, top_k=min(5, len(docs_for_rerank)))
+
+            # extraer texto rerankeado y volver al formato original de mensajes
+            reranked_texts = [item["text"] for item in reranked]
+            # mapear de vuelta a msg original
+            new_relevant = []
+            text_to_msg = {f"{m['role']}: {m['content']}": m for m in most_relevant}
+            for t in reranked_texts:
+                if t in text_to_msg:
+                    new_relevant.append(text_to_msg[t])
+
+            # reemplazamos
+            most_relevant = new_relevant
+
+        # Paso 3: Construcción del contexto final
         context_str = ""
         for msg in most_relevant:
             context_str += f"[{msg['role']}] {msg['content']}\n"
@@ -276,6 +298,7 @@ class RAGAgent:
             "context_chars": len(context_str),
         }
 
+        # Paso 4: Prompt final al modelo
         prompt = (
             "You are a helpful assistant that answers a question based on the evidence below.\n\n"
             f"Evidence:\n{context_str}\n"
@@ -284,7 +307,6 @@ class RAGAgent:
         )
 
         messages = [{"role": "user", "content": prompt}]
-        # Asumimos que self.model.reply devuelve string o estructura con text; adaptá según tu wrapper
         answer = self.model.reply(messages)
 
         return answer, context_info
