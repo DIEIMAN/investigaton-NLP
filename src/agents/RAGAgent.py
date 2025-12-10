@@ -252,61 +252,129 @@ def retrieve_most_relevant_messages(
 
 
 class RAGAgent:
-    def __init__(self, model, embedding_model_name: str, api_base: Optional[str] = None, provider_hint: Optional[str] = None):
-        self.model = model
-        self.embedding_model_name = embedding_model_name
-        self.api_base = api_base
-        self.provider_hint = provider_hint
+def __init__(self, model, embedding_model_name):
+self.model = model
+self.embedding_model_name = embedding_model_name
+self.retriever = model.retriever
+self.llm_client = model.client
+self.reranker = Reranker("BAAI/bge-reranker-base")
 
-        # ⬇️ NUEVO: inicializar el reranker
-        self.reranker = Reranker("BAAI/bge-reranker-base")
 
-    def answer(self, instance: LongMemEvalInstance, k: int = 10) -> Tuple[str, Dict]:
-        # Paso 1: Recuperación por embeddings
-        most_relevant = retrieve_most_relevant_messages(
-            instance,
-            k,
-            self.embedding_model_name,
-            api_base=self.api_base,
-            provider_hint=self.provider_hint,
-        )
+# ---------------------------------------------------------
+# Query Rewriter con Ollama
+# ---------------------------------------------------------
+def rewrite_query(self, query: str) -> str:
+system_prompt = (
+"Reescribí el siguiente query para hacerlo más claro y directo. "
+"No cambies la intención, no cambies el idioma, no agregues información nueva."
+)
 
-        # Paso 2: Aplicar RERANKING sobre esos k documentos
-        if most_relevant:
-            docs_for_rerank = [{"text": f"{m['role']}: {m['content']}"} for m in most_relevant]
-            reranked = self.reranker.rerank(instance.question, docs_for_rerank, top_k=min(5, len(docs_for_rerank)))
 
-            # extraer texto rerankeado y volver al formato original de mensajes
-            reranked_texts = [item["text"] for item in reranked]
-            # mapear de vuelta a msg original
-            new_relevant = []
-            text_to_msg = {f"{m['role']}: {m['content']}": m for m in most_relevant}
-            for t in reranked_texts:
-                if t in text_to_msg:
-                    new_relevant.append(text_to_msg[t])
+try:
+response = self.llm_client.chat.completions.create(
+model="ollama/qwen2.5:3b",
+messages=[
+{"role": "system", "content": system_prompt},
+{"role": "user", "content": query}
+]
+)
+rewritten = response.choices[0].message["content"].strip()
+if not rewritten or len(rewritten) < 3:
+return query
+return rewritten
+except Exception:
+return query
 
-            # reemplazamos
-            most_relevant = new_relevant
 
-        # Paso 3: Construcción del contexto final
-        context_str = ""
-        for msg in most_relevant:
-            context_str += f"[{msg['role']}] {msg['content']}\n"
+# ---------------------------------------------------------
+# Context Compressor simple
+# ---------------------------------------------------------
+def compress_context(self, docs, max_chars=2000):
+context = "\n".join(d.text for d in docs if d.text)
+if len(context) <= max_chars:
+return context
 
-        context_info = {
-            "context_messages": len(most_relevant),
-            "context_chars": len(context_str),
-        }
 
-        # Paso 4: Prompt final al modelo
-        prompt = (
-            "You are a helpful assistant that answers a question based on the evidence below.\n\n"
-            f"Evidence:\n{context_str}\n"
-            f"Question: {instance.question}\n\n"
-            "Provide a concise, factual answer. If the answer is not in the evidence, say you don't know."
-        )
+compressed_prompt = (
+"Resumí el siguiente contenido manteniendo únicamente los datos factuales importantes "
+"para responder preguntas relacionadas. No agregues información nueva."
+)
 
-        messages = [{"role": "user", "content": prompt}]
-        answer = self.model.reply(messages)
 
-        return answer, context_info
+try:
+response = self.llm_client.chat.completions.create(
+model="ollama/qwen2.5:3b",
+messages=[
+{"role": "system", "content": compressed_prompt},
+{"role": "user", "content": context}
+]
+)
+summary = response.choices[0].message["content"].strip()
+return summary
+except Exception:
+return context[:max_chars]
+
+
+# Retrieval Reranking
+
+def retrieve_with_rerank(self, query):
+try:
+docs = self.retriever.retrieve(query)
+except Exception:
+return []
+
+
+if not docs:
+return []
+
+
+try:
+reranked = self.reranker.rerank(query, docs, top_k=5)
+return reranked
+except Exception:
+return docs[:5]
+
+
+# Pipeline completo
+
+def answer(self, instance):
+query = instance.question
+
+
+rewritten = self.rewrite_query(query)
+top_docs = self.retrieve_with_rerank(rewritten)
+context_text = self.compress_context(top_docs)
+
+
+messages = [
+{
+"role": "system",
+"content": (
+"Usá exclusivamente el contexto dado para responder. "
+"Si la información no está disponible, respondé que no se puede determinar."
+)
+},
+{
+"role": "user",
+"content": f"Pregunta: {query}\n\nContexto:\n{context_text}"
+}
+]
+
+
+response = self.llm_client.chat.completions.create(
+model=self.model.model_name,
+messages=messages
+)
+
+
+predicted = response.choices[0].message["content"].strip()
+
+
+context_info = {
+"context_messages": len(top_docs),
+"context_chars": len(context_text),
+"rewritten_query": rewritten
+}
+
+
+return predicted, context_info
