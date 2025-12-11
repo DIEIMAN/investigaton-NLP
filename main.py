@@ -2,10 +2,12 @@ import argparse
 import json
 import os
 import time
+
 from dotenv import load_dotenv
-from src.models.LiteLLMModel import LiteLLMModel #Modelo que responde usando el RAG
-from src.agents.JudgeAgent import JudgeAgent #Juez
-from src.agents.RAGAgent import RAGAgent #Modelo de memoria + nombre del modelo de embeddings
+
+from src.models.LiteLLMModel import LiteLLMModel  # Modelo que responde usando el RAG
+from src.agents.JudgeAgent import JudgeAgent      # Juez
+from src.agents.RAGAgent import RAGAgent          # Modelo de memoria + embeddings
 from src.datasets.LongMemEvalDataset import LongMemEvalDataset
 from config.config import Config
 
@@ -23,7 +25,7 @@ def parse_args():
         "--memory-model",
         type=str,
         default="ollama/gemma3:4b",
-        help="Model name for memory/RAG agent (default: ollama/gemma3:4b)"
+        help="Model name for memory/RAG agent (default: ollama/gemma3:4b)",
     )
 
     # Modelo que actúa como juez (LLM que evalúa si la respuesta es correcta)
@@ -31,17 +33,17 @@ def parse_args():
         "--judge-model",
         type=str,
         default="ollama/gemma3:4b",
-        help="Model name for judge agent (default: openai/gpt-5-mini)"
+        help="Model name for judge agent (default: ollama/gemma3:4b)",
     )
 
     # Tipo de dataset: "oracle" (solo sesiones relevantes) o "short" (historial corto).
-    # En el paper existe también "long", pero acá por CLI solo usan oracle/short.
+    # En el paper existe también "long", pero acá por CLI solo usamos oracle/short.
     parser.add_argument(
         "--dataset-type",
         type=str,
         default="short",
         choices=["oracle", "short"],
-        help="Dataset type: oracle, short (default: short)"
+        help="Dataset type: oracle, short (default: short)",
     )
 
     # Conjunto de datos: benchmark original o los sets del Investigathon.
@@ -50,19 +52,32 @@ def parse_args():
         type=str,
         default="longmemeval",
         choices=["longmemeval", "investigathon_evaluation", "investigathon_held_out"],
-        help="Dataset set to use (default: longmemeval)"
+        help="Dataset set to use (default: longmemeval)",
     )
 
     # Cantidad de samples a procesar en esta corrida.
     parser.add_argument(
-        "-n", "--num-samples",
+        "-n",
+        "--num-samples",
         type=int,
         default=10,
-        help="Number of samples to process (default: 10)"
+        help="Number of samples to process (default: 10)",
     )
+
+    # Nombre / tag de la corrida (para separar carpetas de resultados)
+    parser.add_argument(
+        "--run-tag",
+        type=str,
+        default="",
+        help="Optional tag/suffix for results dir (e.g. 'chunk500_overlap50')",
+    )
+
     return parser.parse_args()
 
-# Parseamos argumentos
+
+# ------------------------------
+# Parseo de argumentos y config
+# ------------------------------
 
 args = parse_args()
 
@@ -76,78 +91,106 @@ config = Config(
 )
 
 print(f"\nInitializing models...")
-print(f"  Memory Model: {config.memory_model_name}")
-print(f"  Judge Model: {config.judge_model_name}")
-print(f"  Embedding Model: {config.embedding_model_name}")
+print(f"  Memory Model:   {config.memory_model_name}")
+print(f"  Judge Model:    {config.judge_model_name}")
+print(f"  Embedding Model:{config.embedding_model_name}")
 
-memory_model = LiteLLMModel(config.memory_model_name) # Modelo de memoria (RAG) envuelto en LiteLLM
+memory_model = LiteLLMModel(config.memory_model_name)  # Modelo de memoria (RAG)
+judge_model = LiteLLMModel(config.judge_model_name)    # Modelo juez
 
-judge_model = LiteLLMModel(config.judge_model_name) # Modelo juez envuelto en LiteLLM
-judge_agent = JudgeAgent(model=judge_model) # Agente juez que usa el modelo anterior y un prompt de evaluación
+judge_agent = JudgeAgent(model=judge_model)
+memory_agent = RAGAgent(
+    model=memory_model,
+    embedding_model_name=config.embedding_model_name,
+)
 
-memory_agent = RAGAgent(model=memory_model, embedding_model_name=config.embedding_model_name) # Agente RAG que usa el modelo de memoria y un modelo de embeddings
+# ------------------------------
+# Carga del dataset
+# ------------------------------
 
-# Cargamos el dataset (LongMemEval + variaciones Investigathon)
+longmemeval_dataset = LongMemEvalDataset(
+    config.longmemeval_dataset_type,
+    config.longmemeval_dataset_set,
+)
 
-longmemeval_dataset = LongMemEvalDataset(config.longmemeval_dataset_type, config.longmemeval_dataset_set)
+# ------------------------------
+# Directorio de resultados
+# ------------------------------
 
-# Create results directory
-results_dir = f"data/results/{config.longmemeval_dataset_set}/{config.longmemeval_dataset_type}/embeddings_{config.embedding_model_name.replace('/', '_')}_memory_{config.memory_model_name.replace('/', '_')}_judge_{config.judge_model_name.replace('/', '_')}"
+# sufijo opcional según el tag de corrida
+tag_suffix = f"_run-{args.run_tag}" if args.run_tag else ""
+
+results_dir = (
+    f"data/results/{config.longmemeval_dataset_set}/{config.longmemeval_dataset_type}/"
+    f"embeddings_{config.embedding_model_name.replace('/', '_')}"
+    f"_memory_{config.memory_model_name.replace('/', '_')}"
+    f"_judge_{config.judge_model_name.replace('/', '_')}"
+    f"{tag_suffix}"
+)
+
 os.makedirs(results_dir, exist_ok=True)
 
 print(f"\nResults will be saved to: {results_dir}")
 print(f"Processing samples...")
 print("=" * 100)
 
-# Bucle principal: procesar N instancias del dataset
+# ------------------------------
+# Bucle principal
+# ------------------------------
+
 for instance in longmemeval_dataset[: config.N]:
     # Un archivo JSON por pregunta
+    result_file = os.path.join(results_dir, f"{instance.question_id}.json")
 
-    result_file = f"{results_dir}/{instance.question_id}.json"
-    
     # Si ya existe resultado para esa pregunta, la salteamos
     if os.path.exists(result_file):
-        print(f"Skipping {instance.question_id} because it already exists", flush=True)
+        print(
+            f"Skipping {instance.question_id} because it already exists",
+            flush=True,
+        )
         continue
 
-     #Medimos la latencia de todo el proceso de respuesta del agente de memoria
+    # Medimos la latencia de todo el proceso de respuesta del agente de memoria
     start_time = time.time()
-    # Llamamos al RAGAgent devuelve una TUPLA: (predicted_answer, context_info(Palabras, Chars))
+    # RAGAgent.answer devuelve (predicted_answer, context_info)
     predicted_answer, context_info = memory_agent.answer(instance)
-    # Latencia total en segundos
     latency = time.time() - start_time
 
-
-    if config.longmemeval_dataset_set != "investigathon_held_out":     # Si no es held-out, también evaluamos con el juez
-
+    # Si no es held-out, también evaluamos con el juez
+    answer_is_correct = None
+    if config.longmemeval_dataset_set != "investigathon_held_out":
         answer_is_correct = judge_agent.judge(instance, predicted_answer)
 
-       # Guardamos resultado en JSON
-    with open(result_file, "w", encoding="utf-8") as f:
-        result = {
-            "question_id": instance.question_id,
-            "question": instance.question,
-            "predicted_answer": predicted_answer,
-            # métricas nuevas:
-            "latency_seconds": latency,
-            "context_messages": context_info["context_messages"],
-            "context_chars": context_info["context_chars"],
-        }
-        # En los sets con ground truth guardamos también la respuesta correcta y el flag de correctitud
-        if config.longmemeval_dataset_set != "investigathon_held_out":
-            result["answer"] = instance.answer
-            result["answer_is_correct"] = answer_is_correct
+    # Guardamos resultado en JSON
+    result = {
+        "question_id": instance.question_id,
+        "question": instance.question,
+        "predicted_answer": predicted_answer,
+        # métricas nuevas:
+        "latency_seconds": latency,
+        "context_messages": context_info["context_messages"],
+        "context_chars": context_info["context_chars"],
+    }
 
+    # En los sets con ground truth guardamos también la respuesta correcta y el flag
+    if config.longmemeval_dataset_set != "investigathon_held_out":
+        result["answer"] = instance.answer
+        result["answer_is_correct"] = answer_is_correct
+
+    with open(result_file, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)
 
-        # Logging simple a consola
-        print(f"  Question: {instance.question}...")
-        print(f"  Predicted: {predicted_answer}")
-        if config.longmemeval_dataset_set != "investigathon_held_out":
-            print(f"  Ground Truth: {instance.answer}")
-            print(f"  Correct: {answer_is_correct}")
-        print(f"  Latency (s): {latency:.2f}")
-        print(f"  Context messages: {context_info['context_messages']}, chars: {context_info['context_chars']}")
-        print("-" * 100)
+    # Logging simple a consola
+    print(f"  Question: {instance.question}...")
+    print(f"  Predicted: {predicted_answer}")
+    if config.longmemeval_dataset_set != "investigathon_held_out":
+        print(f"  Ground Truth: {instance.answer}")
+        print(f"  Correct: {answer_is_correct}")
+    print(
+        f"  Latency (s): {latency:.2f} | "
+        f"Context messages: {context_info['context_messages']}, "
+        f"chars: {context_info['context_chars']}"
+    )
+    print("-" * 100)
 
 print("EVALUATION COMPLETE")

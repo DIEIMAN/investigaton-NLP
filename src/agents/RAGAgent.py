@@ -13,6 +13,9 @@ from litellm import embedding  # wrapper unificado de LiteLLM
 # --- Configuración de reintentos para embedding ---
 MAX_RETRIES = 3
 BACKOFF_FACTOR = 1.5  # exponencial
+# --- Límite de tiempo para el chunking por instancia ---
+MAX_CHUNKING_SECONDS = 60.0  
+
 
 
 def robust_embed_texts(
@@ -22,44 +25,57 @@ def robust_embed_texts(
     provider_hint: Optional[str] = None,
 ) -> List[Optional[List[float]]]:
     """
-    Recibe una lista de textos y devuelve una lista de embeddings (o None si falla para un texto).
-    Hace la llamada en batch cuando sea posible y reintenta en caso de errores transitorios.
-    Parámetros:
-      - texts: lista de strings a embedir
-      - embedding_model_name: nombre del modelo (ej: "ollama/nomic-embed-text" o "nomic-embed-text")
-      - api_base: opcional, por ejemplo "http://localhost:11434"
-      - provider_hint: opcional, si LiteLLM reclama el 'provider' (p.ej "ollama")
+    Devuelve una lista de embeddings (o None) para cada texto.
+    Soporta tanto respuestas de LiteLLM en forma de objetos Embedding
+    como en forma de diccionarios.
     """
-    # Remover strings vacíos y mantener indices para recomponer
     if not texts:
         return []
 
-    # Intentar en batch; litellm.embedding típicamente acepta lista en input
     attempt = 0
     while attempt < MAX_RETRIES:
         try:
             kwargs = {"model": embedding_model_name, "input": texts}
             if api_base:
                 kwargs["api_base"] = api_base
-            if provider_hint:
-                # en algunas versiones litellm requiere una forma de modelo con provider; la dejamos como hint
-                kwargs["model"] = embedding_model_name  # keep, user can pass full provider path
+            # provider_hint hoy no lo usamos, pero lo dejamos por si acaso
             resp = embedding(**kwargs)
-            # resp.data es una lista de objetos con "embedding"
-            out = []
+
+            out: list[Optional[List[float]]] = []
             for item in resp.data:
-                if item is None or "embedding" not in item:
+                if item is None:
+                    out.append(None)
+                    continue
+
+                vec = None
+
+                # Caso 1: objeto tipo Embedding, con atributo .embedding
+                if hasattr(item, "embedding"):
+                    vec = item.embedding
+                # Caso 2: diccionario {"embedding": [...]}
+                elif isinstance(item, dict):
+                    vec = item.get("embedding")
+                else:
+                    # fallback super defensivo
+                    try:
+                        vec = item["embedding"]  # type: ignore[index]
+                    except Exception:
+                        vec = None
+
+                if vec is None:
                     out.append(None)
                 else:
-                    out.append(item["embedding"])
+                    # aseguramos que sea una lista de floats normal
+                    out.append(list(vec))
+
             return out
+
         except Exception as e:
             attempt += 1
             wait = BACKOFF_FACTOR ** attempt
             print(f"[embed] attempt {attempt} failed: {e}. retrying in {wait:.1f}s...")
             time.sleep(wait)
 
-    # Si falló todo, devolvemos None para cada texto
     print("[embed] all retries failed, returning None embeddings")
     return [None] * len(texts)
 
@@ -68,13 +84,15 @@ def chunk_text(
     text: str,
     chunk_size: int = 500,
     chunk_overlap: int = 50,
-    prefer_sentence_boundary: bool = True,
+    prefer_sentence_boundary: bool = True,  # lo dejamos pero no lo usamos ahora
 ) -> List[str]:
     """
-    Divide `text` en chunks de hasta `chunk_size` caracteres con `chunk_overlap` de solapamiento.
-    - evita cortar palabras (trata de retroceder hasta un espacio)
-    - si prefer_sentence_boundary=True intenta cortar en puntos/fin de oración cuando sea posible
+    Versión *segura* de chunk_text:
+    - Divide el texto en ventanas de tamaño fijo `chunk_size`
+    - Con solapamiento de `chunk_overlap`
+    - Sin lógica rara de oraciones ni búsquedas hacia atrás que puedan colgarse
     """
+
     if not text:
         return []
 
@@ -84,42 +102,29 @@ def chunk_text(
     if n <= chunk_size:
         return [text]
 
-    chunks = []
+    chunks: List[str] = []
+
+    # Paso fijo: cuánto avanzamos cada vez
+    step = max(1, chunk_size - chunk_overlap)
+
     start = 0
-    while start < n:
+    safety_iters = 0
+    MAX_ITERS = 100000  # por seguridad extra
+
+    while start < n and safety_iters < MAX_ITERS:
         end = min(start + chunk_size, n)
-
-        # preferir final de oración cercano al end
-        if prefer_sentence_boundary and end < n:
-            # buscar ., ? o ! desde end-1 hacia start
-            segment = text[start:end]
-            # buscar el último punto/fin de frase en segment (excluyendo abreviaturas complicadas)
-            m = re.search(r'([\.!?])\s+[A-ZÁÉÍÓÚÑ]', text[start:end + 20])  # lookahead simple
-            # alternativa más simple: buscar el último .!? dentro del segmento
-            last_punct = max(segment.rfind('.'), segment.rfind('!'), segment.rfind('?'))
-            if last_punct != -1 and last_punct > int(0.5 * (end - start)):
-                end = start + last_punct + 1
-
-        # evitar cortar palabra: retroceder hasta el último espacio si estamos en medio de palabra
-        if end < n and text[end].isalnum():
-            last_space = text.rfind(" ", start, end)
-            if last_space != -1 and last_space > start:
-                end = last_space
-
         chunk = text[start:end].strip()
         if chunk:
             chunks.append(chunk)
 
-        # mover inicio considerando overlap
-        start = end - chunk_overlap
-        if start < 0:
-            start = 0
+        start += step
+        safety_iters += 1
 
-        # seguridad: si no avanzamos, forzamos avanzar para evitar loop infinito
-        if len(chunks) > 0 and start == (end - chunk_overlap) and end == n:
-            break
+    if safety_iters >= MAX_ITERS:
+        print("[WARN] chunk_text: reached MAX_ITERS, cutting early")
 
     return chunks
+
 
 
 def get_messages_and_embeddings(
@@ -138,31 +143,36 @@ def get_messages_and_embeddings(
       - embeddings: lista paralela de np.ndarray (float32) o None si falló embedding
     """
 
+    start_time = time.time()
+
     cache_dir = f"data/rag/embeddings_{embedding_model_name.replace('/', '_')}"
     cache_path = os.path.join(cache_dir, f"{instance.question_id}.parquet")
 
     # Leer caché si existe
     if os.path.exists(cache_path):
         df = pd.read_parquet(cache_path)
-        # df["embeddings"] debería ser listas de floats o None
         messages = df["messages"].tolist()
         embeddings_raw = df["embeddings"].tolist()
         embeddings = [
-            np.array(e, dtype=np.float32) if (e is not None) else None for e in embeddings_raw
+            np.array(e, dtype=np.float32) if (e is not None) else None
+            for e in embeddings_raw
         ]
         return messages, embeddings
 
     # Si no hay caché, construir lista de chunks
     messages = []
     texts_to_embed = []
-    # Mantener mapeo de index en texts_to_embed -> index en messages
     mapping = []
 
     for session_idx, session in enumerate(tqdm(instance.sessions, desc="Chunking sessions")):
+        # Timeout de chunking
+        if time.time() - start_time > MAX_CHUNKING_SECONDS:
+            raise TimeoutError(f"Chunking timeout para question_id={instance.question_id}")
+
         for msg_idx, message in enumerate(session.messages):
             role = message.get("role", "user")
             content = message.get("content", "")
-            # chunkear el contenido
+
             chunks = chunk_text(content, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
             for cix, chunk in enumerate(chunks):
                 msg_record = {
@@ -179,19 +189,23 @@ def get_messages_and_embeddings(
     # Embedir en batches
     embeddings: List[Optional[np.ndarray]] = [None] * len(messages)
     for i in tqdm(range(0, len(texts_to_embed), batch_size), desc="Embedding batches"):
+        # Timeout también en la fase de embeddings
+        if time.time() - start_time > MAX_CHUNKING_SECONDS:
+            raise TimeoutError(f"Embedding timeout para question_id={instance.question_id}")
+
         batch_texts = texts_to_embed[i : i + batch_size]
-        batch_embeddings = robust_embed_texts(batch_texts, embedding_model_name, api_base, provider_hint)
+        batch_embeddings = robust_embed_texts(
+            batch_texts,
+            embedding_model_name,
+            api_base,
+            provider_hint,
+        )
         for j, emb in enumerate(batch_embeddings):
             global_idx = i + j
             msg_idx = mapping[global_idx]
-            if emb is None:
-                embeddings[msg_idx] = None
-            else:
-                embeddings[msg_idx] = np.array(emb, dtype=np.float32)
+            embeddings[msg_idx] = None if emb is None else np.array(emb, dtype=np.float32)
 
-    # Asegurar carpeta y guardar caché (guardamos listas simples para parquet)
     os.makedirs(cache_dir, exist_ok=True)
-    # convertir embeddings a listas o None para parquet
     embeddings_for_disk = [e.tolist() if e is not None else None for e in embeddings]
     df = pd.DataFrame({"messages": messages, "embeddings": embeddings_for_disk})
     df.to_parquet(cache_path, index=False)
@@ -207,17 +221,23 @@ def retrieve_most_relevant_messages(
     provider_hint: Optional[str] = None,
 ) -> List[dict]:
     """
-    Recupera los k mensajes más relevantes usando producto punto entre embeddings (cosine opcional).
+    Recupera los k mensajes más relevantes usando similitud de coseno entre embeddings.
     Ignora mensajes cuyo embedding sea None.
     """
-    # Embedding de la pregunta
-    q_emb_list = robust_embed_texts([instance.question], embedding_model_name, api_base, provider_hint)
+    # --- Embedding de la pregunta ---
+    q_emb_list = robust_embed_texts(
+        [instance.question],
+        embedding_model_name,
+        api_base,
+        provider_hint,
+    )
     q_emb = q_emb_list[0]
     if q_emb is None:
         raise RuntimeError("No se pudo generar embedding para la pregunta.")
 
     q_emb = np.array(q_emb, dtype=np.float32)
 
+    # --- Embeddings de los mensajes del historial ---
     messages, embeddings = get_messages_and_embeddings(
         instance,
         embedding_model_name,
@@ -232,7 +252,7 @@ def retrieve_most_relevant_messages(
 
     mat = np.stack([embeddings[i] for i in valid_indices], axis=0)  # shape (M, D)
 
-    # normalizar para usar cosine similarity (opcionalmente se puede usar dot product directo)
+    # --- Normalizar para usar cosine similarity ---
     def safe_normalize(x: np.ndarray) -> np.ndarray:
         norm = np.linalg.norm(x)
         if norm == 0 or math.isnan(norm):
@@ -242,13 +262,16 @@ def retrieve_most_relevant_messages(
     qn = safe_normalize(q_emb)
     matn = np.array([safe_normalize(row) for row in mat])
 
-    scores = matn @ qn  # cosine similitudes
-    # obtener top-k sobre los índices válidos
+    # Cosine similarities
+    scores = matn @ qn
+
+    # Top-k sobre los índices válidos
     topk_idx = np.argsort(scores)[::-1][:k]
     selected_global_indices = [valid_indices[i] for i in topk_idx]
     most_relevant_messages = [messages[i] for i in selected_global_indices]
 
     return most_relevant_messages
+
 
 
 class RAGAgent:

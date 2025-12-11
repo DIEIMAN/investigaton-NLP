@@ -19,9 +19,10 @@ class Config(BaseModel):
     # Modelo de embeddings a utilizar en el retriever semántico.
     # Por defecto usan nomic-embed-text servido por ollama.
     embedding_model_name: str = Field(
-    default="nomic-embed-text",
-    description="Name of the embedding model",
-)
+        default="gemini/text-embedding-004",
+        description="Name of the embedding model",
+    )
+
 
     # Nombre del modelo que se usa como juez (LLM-as-a-judge).
     judge_model_name: str = Field(
@@ -53,7 +54,7 @@ class Config(BaseModel):
 
     # Cantidad de samples a procesar en esta corrida
     N: int = Field(
-        default=10,
+        default=1000,
         description="Number of samples to process",
     )
 
