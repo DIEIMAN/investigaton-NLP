@@ -13,9 +13,9 @@ from litellm import embedding  # wrapper unificado de LiteLLM
 # --- Configuración de reintentos para embedding ---
 MAX_RETRIES = 3
 BACKOFF_FACTOR = 1.5  # exponencial
-# --- Límite de tiempo para el chunking por instancia ---
-MAX_CHUNKING_SECONDS = 60.0  
 
+# --- Límite de tiempo para el chunking+embeddings por instancia ---
+MAX_CHUNKING_SECONDS = 60.0
 
 
 def robust_embed_texts(
@@ -84,7 +84,7 @@ def chunk_text(
     text: str,
     chunk_size: int = 500,
     chunk_overlap: int = 50,
-    prefer_sentence_boundary: bool = True,  # lo dejamos pero no lo usamos ahora
+    prefer_sentence_boundary: bool = True,  # ya no lo usamos pero queda en la firma
 ) -> List[str]:
     """
     Versión *segura* de chunk_text:
@@ -92,7 +92,6 @@ def chunk_text(
     - Con solapamiento de `chunk_overlap`
     - Sin lógica rara de oraciones ni búsquedas hacia atrás que puedan colgarse
     """
-
     if not text:
         return []
 
@@ -126,7 +125,6 @@ def chunk_text(
     return chunks
 
 
-
 def get_messages_and_embeddings(
     instance: LongMemEvalInstance,
     embedding_model_name: str,
@@ -142,7 +140,6 @@ def get_messages_and_embeddings(
       - messages: lista de dicts con keys: role, content, original_index, chunk_id
       - embeddings: lista paralela de np.ndarray (float32) o None si falló embedding
     """
-
     start_time = time.time()
 
     cache_dir = f"data/rag/embeddings_{embedding_model_name.replace('/', '_')}"
@@ -160,20 +157,25 @@ def get_messages_and_embeddings(
         return messages, embeddings
 
     # Si no hay caché, construir lista de chunks
-    messages = []
-    texts_to_embed = []
-    mapping = []
+    messages: List[dict] = []
+    texts_to_embed: List[str] = []
+    mapping: List[int] = []
 
     for session_idx, session in enumerate(tqdm(instance.sessions, desc="Chunking sessions")):
         # Timeout de chunking
         if time.time() - start_time > MAX_CHUNKING_SECONDS:
-            raise TimeoutError(f"Chunking timeout para question_id={instance.question_id}")
+            print(f"[WARN] Chunking timeout para question_id={instance.question_id}, cortando early")
+            break
 
         for msg_idx, message in enumerate(session.messages):
             role = message.get("role", "user")
             content = message.get("content", "")
 
-            chunks = chunk_text(content, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+            chunks = chunk_text(
+                content,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+            )
             for cix, chunk in enumerate(chunks):
                 msg_record = {
                     "role": role,
@@ -186,12 +188,18 @@ def get_messages_and_embeddings(
                 texts_to_embed.append(f"{role}: {chunk}")
                 mapping.append(len(messages) - 1)
 
+    # Si no se generó ningún mensaje, devolvemos vacío
+    if not messages:
+        print(f"[WARN] No hay mensajes chunked para question_id={instance.question_id}")
+        return [], []
+
     # Embedir en batches
     embeddings: List[Optional[np.ndarray]] = [None] * len(messages)
     for i in tqdm(range(0, len(texts_to_embed), batch_size), desc="Embedding batches"):
         # Timeout también en la fase de embeddings
         if time.time() - start_time > MAX_CHUNKING_SECONDS:
-            raise TimeoutError(f"Embedding timeout para question_id={instance.question_id}")
+            print(f"[WARN] Embedding timeout para question_id={instance.question_id}, cortando early")
+            break
 
         batch_texts = texts_to_embed[i : i + batch_size]
         batch_embeddings = robust_embed_texts(
@@ -202,9 +210,12 @@ def get_messages_and_embeddings(
         )
         for j, emb in enumerate(batch_embeddings):
             global_idx = i + j
+            if global_idx >= len(mapping):
+                break
             msg_idx = mapping[global_idx]
             embeddings[msg_idx] = None if emb is None else np.array(emb, dtype=np.float32)
 
+    # Guardar caché
     os.makedirs(cache_dir, exist_ok=True)
     embeddings_for_disk = [e.tolist() if e is not None else None for e in embeddings]
     df = pd.DataFrame({"messages": messages, "embeddings": embeddings_for_disk})
@@ -245,6 +256,10 @@ def retrieve_most_relevant_messages(
         provider_hint=provider_hint,
     )
 
+    # Si no hay mensajes, devolvemos contexto vacío
+    if not messages:
+        return []
+
     # Filtrar mensajes con embeddings válidos
     valid_indices = [i for i, e in enumerate(embeddings) if e is not None]
     if not valid_indices:
@@ -273,9 +288,14 @@ def retrieve_most_relevant_messages(
     return most_relevant_messages
 
 
-
 class RAGAgent:
-    def __init__(self, model, embedding_model_name: str, api_base: Optional[str] = None, provider_hint: Optional[str] = None):
+    def __init__(
+        self,
+        model,
+        embedding_model_name: str,
+        api_base: Optional[str] = None,
+        provider_hint: Optional[str] = None,
+    ):
         self.model = model
         self.embedding_model_name = embedding_model_name
         self.api_base = api_base
@@ -290,9 +310,12 @@ class RAGAgent:
             provider_hint=self.provider_hint,
         )
 
-        context_str = ""
-        for msg in most_relevant:
-            context_str += f"[{msg['role']}] {msg['content']}\n"
+        if most_relevant:
+            context_str = ""
+            for msg in most_relevant:
+                context_str += f"[{msg['role']}] {msg['content']}\n"
+        else:
+            context_str = "(No relevant past context found for this question.)\n"
 
         context_info = {
             "context_messages": len(most_relevant),
@@ -307,7 +330,6 @@ class RAGAgent:
         )
 
         messages = [{"role": "user", "content": prompt}]
-        # Asumimos que self.model.reply devuelve string o estructura con text; adaptá según tu wrapper
         answer = self.model.reply(messages)
 
         return answer, context_info
