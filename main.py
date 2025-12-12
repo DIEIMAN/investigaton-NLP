@@ -60,7 +60,7 @@ def parse_args():
         "-n",
         "--num-samples",
         type=int,
-        default=10,
+        default=20,
         help="Number of samples to process (default: 10)",
     )
 

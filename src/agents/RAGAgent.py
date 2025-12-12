@@ -82,7 +82,7 @@ def robust_embed_texts(
 
 def chunk_text(
     text: str,
-    chunk_size: int = 1500,
+    chunk_size: int = 1000,
     chunk_overlap: int = 100,
     prefer_sentence_boundary: bool = True,  # ya no lo usamos pero queda en la firma
 ) -> List[str]:
@@ -142,8 +142,12 @@ def get_messages_and_embeddings(
     """
     start_time = time.time()
 
-    cache_dir = f"data/rag/embeddings_{embedding_model_name.replace('/', '_')}"
+    cache_dir = (
+    f"data/rag/embeddings_{embedding_model_name.replace('/', '_')}"
+    f"_cs{chunk_size}_ov{chunk_overlap}"
+)
     cache_path = os.path.join(cache_dir, f"{instance.question_id}.parquet")
+
 
     # Leer caché si existe
     if os.path.exists(cache_path):
