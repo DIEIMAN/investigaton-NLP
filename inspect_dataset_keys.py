@@ -27,7 +27,6 @@ for k, v in row0.items():
     print(f"  Tipo: {v_type}")
     print(f"  Ejemplo: {preview}\n")
 
-# 🔽🔽🔽 ACÁ LO NUEVO 🔽🔽🔽
 
 # Lista con todos los question_type
 question_types = [row["question_type"] for row in rows]

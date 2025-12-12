@@ -23,7 +23,7 @@ def main():
         print(resp)
 
         # Intentar leer el primer vector
-        emb = resp.data[0]["embedding"]
+        emb = resp.data[0].embedding
         print("\nDimensión del embedding:", len(emb))
         print("Primeros 5 valores:", emb[:5])
 

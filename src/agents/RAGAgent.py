@@ -82,8 +82,8 @@ def robust_embed_texts(
 
 def chunk_text(
     text: str,
-    chunk_size: int = 500,
-    chunk_overlap: int = 50,
+    chunk_size: int = 1500,
+    chunk_overlap: int = 100,
     prefer_sentence_boundary: bool = True,  # ya no lo usamos pero queda en la firma
 ) -> List[str]:
     """
